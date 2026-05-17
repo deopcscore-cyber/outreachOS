@@ -1,0 +1,27 @@
+{
+  "name": "outreachos",
+  "version": "1.0.0",
+  "description": "B2B cold email outreach tool with AI-powered personalisation",
+  "scripts": {
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "server": "node --experimental-sqlite server/index.js",
+    "client": "cd client && npm run dev",
+    "install:all": "npm install && cd client && npm install",
+    "build": "cd client && npm install && npm run build",
+    "start": "node --experimental-sqlite server/index.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "nodemailer": "^6.9.13",
+    "node-cron": "^3.0.3",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
