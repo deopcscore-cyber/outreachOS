@@ -283,34 +283,45 @@ export default function ProspectSearch() {
         </div>
       )}
 
-      {error && <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{error}</div>}
-      {success && <div className="mb-4 px-4 py-3 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">{success}</div>}
-      {addErrors.length > 0 && (
-        <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-          <p className="font-medium mb-1">Some prospects failed to add:</p>
-          <ul className="list-disc list-inside space-y-0.5">{addErrors.map((e, i) => <li key={i}>{e}</li>)}</ul>
-        </div>
-      )}
-
       {results.length > 0 && (
         <div className="card overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between flex-wrap gap-3">
-            <div className="flex items-center gap-3">
-              <button onClick={selectAll} className="btn-secondary text-xs">
-                {selected.size === results.length ? 'Deselect all' : 'Select all'}
-              </button>
-              <span className="text-sm text-gray-500">{results.length} prospect{results.length !== 1 ? 's' : ''}</span>
+          <div className="px-6 py-4 border-b border-gray-100 flex flex-col gap-3">
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <div className="flex items-center gap-3">
+                <button onClick={selectAll} className="btn-secondary text-xs">
+                  {selected.size === results.length ? 'Deselect all' : 'Select all'}
+                </button>
+                <span className="text-sm text-gray-500">{results.length} prospect{results.length !== 1 ? 's' : ''}</span>
+              </div>
+
+              {selected.size > 0 && (
+                <div className="flex items-center gap-3 flex-wrap">
+                  {campaigns.length === 0 ? (
+                    <span className="text-sm text-amber-600">
+                      No campaigns yet. <a href="/campaigns" className="underline font-medium">Create one first.</a>
+                    </span>
+                  ) : (
+                    <>
+                      <select className="input !w-auto" value={selectedCampaign} onChange={e => setSelectedCampaign(e.target.value)}>
+                        <option value="">Select campaign…</option>
+                        {campaigns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                      </select>
+                      <button className="btn-primary" onClick={addToCampaign} disabled={adding}>
+                        {adding ? 'Adding...' : `Add ${selected.size} to Campaign`}
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
 
-            {selected.size > 0 && (
-              <div className="flex items-center gap-3">
-                <select className="input !w-auto" value={selectedCampaign} onChange={e => setSelectedCampaign(e.target.value)}>
-                  <option value="">Select campaign…</option>
-                  {campaigns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
-                <button className="btn-primary" onClick={addToCampaign} disabled={adding}>
-                  {adding ? 'Adding...' : `Add ${selected.size} to Campaign`}
-                </button>
+            {/* Inline feedback — visible without scrolling up */}
+            {error && <div className="px-4 py-2 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{error}</div>}
+            {success && <div className="px-4 py-2 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">{success}</div>}
+            {addErrors.length > 0 && (
+              <div className="px-4 py-2 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                <p className="font-medium mb-1">Some prospects failed to add:</p>
+                <ul className="list-disc list-inside space-y-0.5">{addErrors.map((e, i) => <li key={i}>{e}</li>)}</ul>
               </div>
             )}
           </div>

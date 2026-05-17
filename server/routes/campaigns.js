@@ -23,6 +23,34 @@ router.post('/', auth, (req, res) => {
   res.json({ id: result.lastInsertRowid, name });
 });
 
+// Outbox — pending emails queued to send (must be before /:id to avoid matching 'outbox' as an id)
+router.get('/outbox', auth, (req, res) => {
+  const rows = db.prepare(`
+    SELECT
+      cp.id as cp_id,
+      cp.current_email_index,
+      cp.next_send_at,
+      cp.status,
+      c.id as campaign_id,
+      c.name as campaign_name,
+      p.first_name, p.last_name, p.email as prospect_email,
+      p.job_title, p.company,
+      et.subject, et.body, et.sequence_index
+    FROM campaign_prospects cp
+    JOIN campaigns c ON c.id = cp.campaign_id
+    JOIN prospects p ON p.id = cp.prospect_id
+    LEFT JOIN email_templates et
+      ON et.campaign_id = cp.campaign_id
+      AND et.sequence_index = cp.current_email_index
+      AND (et.prospect_id = cp.prospect_id OR et.prospect_id IS NULL)
+    WHERE c.user_id = ?
+      AND cp.status = 'pending'
+      AND cp.unsubscribed = 0
+    ORDER BY cp.next_send_at ASC
+  `).all(req.userId);
+  res.json(rows);
+});
+
 // Get campaign detail with prospects and email templates
 router.get('/:id', auth, (req, res) => {
   const campaign = db.prepare('SELECT * FROM campaigns WHERE id = ? AND user_id = ?').get(req.params.id, req.userId);
@@ -92,34 +120,6 @@ router.patch('/:id/ai-email/:prospectId', auth, (req, res) => {
     'UPDATE email_templates SET subject = ?, body = ? WHERE campaign_id = ? AND prospect_id = ? AND sequence_index = 0'
   ).run(subject, body, req.params.id, req.params.prospectId);
   res.json({ ok: true });
-});
-
-// Outbox — pending emails queued to send (preview before they go out)
-router.get('/outbox', auth, (req, res) => {
-  const rows = db.prepare(`
-    SELECT
-      cp.id as cp_id,
-      cp.current_email_index,
-      cp.next_send_at,
-      cp.status,
-      c.id as campaign_id,
-      c.name as campaign_name,
-      p.first_name, p.last_name, p.email as prospect_email,
-      p.job_title, p.company,
-      et.subject, et.body, et.sequence_index
-    FROM campaign_prospects cp
-    JOIN campaigns c ON c.id = cp.campaign_id
-    JOIN prospects p ON p.id = cp.prospect_id
-    LEFT JOIN email_templates et
-      ON et.campaign_id = cp.campaign_id
-      AND et.sequence_index = cp.current_email_index
-      AND (et.prospect_id = cp.prospect_id OR et.prospect_id IS NULL)
-    WHERE c.user_id = ?
-      AND cp.status = 'pending'
-      AND cp.unsubscribed = 0
-    ORDER BY cp.next_send_at ASC
-  `).all(req.userId);
-  res.json(rows);
 });
 
 // Remove prospect from campaign
