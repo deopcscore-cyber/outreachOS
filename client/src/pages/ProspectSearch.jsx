@@ -7,36 +7,65 @@ const INDUSTRIES = [
   'Media', 'Construction', 'Logistics', 'Energy', 'Other',
 ];
 
-// Parse a CSV string into an array of objects using the header row as keys
+// Robust CSV parser — handles quoted fields with embedded newlines/commas
 function parseCsv(text) {
-  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter(l => l.trim());
-  if (lines.length < 2) return [];
+  // Tokenise the entire file character-by-character so quoted multi-line cells work
+  const rows = [];
+  let cur = '';
+  let inQuotes = false;
+  let row = [];
 
-  const parseRow = (line) => {
-    const cols = [];
-    let cur = '';
-    let inQuotes = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (ch === '"') { inQuotes = !inQuotes; continue; }
-      if (ch === ',' && !inQuotes) { cols.push(cur.trim()); cur = ''; continue; }
+  const text2 = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  for (let i = 0; i < text2.length; i++) {
+    const ch = text2[i];
+    const next = text2[i + 1];
+    if (ch === '"') {
+      if (inQuotes && next === '"') { cur += '"'; i++; } // escaped quote
+      else inQuotes = !inQuotes;
+    } else if (ch === ',' && !inQuotes) {
+      row.push(cur); cur = '';
+    } else if (ch === '\n' && !inQuotes) {
+      row.push(cur); cur = '';
+      if (row.some(c => c.trim())) rows.push(row);
+      row = [];
+    } else {
       cur += ch;
     }
-    cols.push(cur.trim());
-    return cols;
-  };
+  }
+  if (cur || row.length) { row.push(cur); if (row.some(c => c.trim())) rows.push(row); }
 
-  const headers = parseRow(lines[0]).map(h => h.toLowerCase().replace(/\s+/g, '_'));
+  if (rows.length < 2) return [];
+
+  const headers = rows[0].map(h => h.trim().toLowerCase().replace(/\s+/g, '_'));
+
+  // Map common export column names to our field names
   const alias = {
-    firstname: 'first_name', lastname: 'last_name', jobtitle: 'job_title',
-    title: 'job_title', organization: 'company', name: 'company',
+    first_name: 'first_name', last_name: 'last_name',
+    firstname: 'first_name', lastname: 'last_name',
+    title: 'job_title', job_title: 'job_title', jobtitle: 'job_title',
+    work_email: 'work_email', personal_email: 'personal_email',
+    email: 'email', email_address: 'email',
+    organization: 'company', company: 'company', employer: 'company',
+    industry: 'industry', sector: 'industry',
+    seniority: 'seniority', seniority_level: 'seniority',
+    location: 'location', country: 'country', region: 'country',
+    linkedin_url: 'linkedin_url',
   };
   const normalize = h => alias[h] || h;
 
-  return lines.slice(1).map(line => {
-    const cols = parseRow(line);
+  return rows.slice(1).map(cols => {
     const row = {};
-    headers.forEach((h, i) => { row[normalize(h)] = cols[i] ?? ''; });
+    headers.forEach((h, i) => { row[normalize(h)] = (cols[i] ?? '').trim(); });
+
+    // Resolve email: prefer work email, fall back to personal email
+    if (!row.email) row.email = row.work_email || row.personal_email || '';
+
+    // Resolve country from location ("Dallas, Texas, United States" → "United States")
+    if (!row.country && row.location) {
+      const parts = row.location.split(',').map(s => s.trim());
+      row.country = parts[parts.length - 1] || row.location;
+    }
+
     return row;
   }).filter(r => r.email);
 }
