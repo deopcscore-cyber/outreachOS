@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 
 const INDUSTRIES = [
@@ -7,13 +7,56 @@ const INDUSTRIES = [
   'Media', 'Construction', 'Logistics', 'Energy', 'Other',
 ];
 
+// Parse a CSV string into an array of objects using the header row as keys
+function parseCsv(text) {
+  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter(l => l.trim());
+  if (lines.length < 2) return [];
+
+  const parseRow = (line) => {
+    const cols = [];
+    let cur = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') { inQuotes = !inQuotes; continue; }
+      if (ch === ',' && !inQuotes) { cols.push(cur.trim()); cur = ''; continue; }
+      cur += ch;
+    }
+    cols.push(cur.trim());
+    return cols;
+  };
+
+  const headers = parseRow(lines[0]).map(h => h.toLowerCase().replace(/\s+/g, '_'));
+  const alias = {
+    firstname: 'first_name', lastname: 'last_name', jobtitle: 'job_title',
+    title: 'job_title', organization: 'company', name: 'company',
+  };
+  const normalize = h => alias[h] || h;
+
+  return lines.slice(1).map(line => {
+    const cols = parseRow(line);
+    const row = {};
+    headers.forEach((h, i) => { row[normalize(h)] = cols[i] ?? ''; });
+    return row;
+  }).filter(r => r.email);
+}
+
 export default function ProspectSearch() {
+  const [tab, setTab] = useState('search');
+
+  // Search state
   const [form, setForm] = useState({ job_title: '', industry: '', country: 'UK', limit: 20 });
+  const [loading, setLoading] = useState(false);
+
+  // CSV state
+  const fileRef = useRef();
+  const [csvError, setCsvError] = useState('');
+
+  // Shared state
   const [results, setResults] = useState([]);
   const [selected, setSelected] = useState(new Set());
   const [campaigns, setCampaigns] = useState([]);
   const [selectedCampaign, setSelectedCampaign] = useState('');
-  const [loading, setLoading] = useState(false);
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -22,18 +65,19 @@ export default function ProspectSearch() {
     api.getCampaigns().then(setCampaigns).catch(console.error);
   }, []);
 
+  const resetResults = () => { setResults([]); setSelected(new Set()); setError(''); setSuccess(''); };
+
+  // --- Search tab ---
   const search = async (e) => {
     e.preventDefault();
     setError('');
-    setResults([]);
-    setSelected(new Set());
+    resetResults();
     setLoading(true);
     try {
       const data = await api.searchProspects(form);
-      // Prospeo returns data.data or data.contacts depending on endpoint
-      const contacts = data.data || data.contacts || data.results || data || [];
+      const contacts = data.results || data.data || data.contacts || data || [];
       setResults(Array.isArray(contacts) ? contacts : []);
-      if (Array.isArray(contacts) && contacts.length === 0) setError('No prospects found. Try different filters.');
+      if (!contacts.length) setError('No prospects found. Try different filters.');
     } catch (err) {
       setError(err.message);
     } finally {
@@ -41,23 +85,42 @@ export default function ProspectSearch() {
     }
   };
 
+  // --- CSV tab ---
+  const handleFile = (e) => {
+    setCsvError('');
+    const file = e.target.files[0];
+    if (!file) return;
+    if (!file.name.endsWith('.csv')) { setCsvError('Please upload a .csv file.'); return; }
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const rows = parseCsv(ev.target.result);
+      if (!rows.length) {
+        setCsvError('No valid rows found. Make sure your CSV has an "email" column and at least one data row.');
+        return;
+      }
+      resetResults();
+      setResults(rows);
+    };
+    reader.readAsText(file);
+  };
+
+  // --- Shared selection & add-to-campaign ---
   const toggleSelect = (idx) => {
     setSelected(prev => {
       const next = new Set(prev);
-      if (next.has(idx)) next.delete(idx);
-      else next.add(idx);
+      next.has(idx) ? next.delete(idx) : next.add(idx);
       return next;
     });
   };
 
   const selectAll = () => {
-    if (selected.size === results.length) setSelected(new Set());
-    else setSelected(new Set(results.map((_, i) => i)));
+    setSelected(selected.size === results.length ? new Set() : new Set(results.map((_, i) => i)));
   };
 
   const addToCampaign = async () => {
     if (!selectedCampaign) { setError('Please select a campaign'); return; }
-    if (selected.size === 0) { setError('Please select at least one prospect'); return; }
+    if (!selected.size) { setError('Please select at least one prospect'); return; }
     setAdding(true);
     setError('');
     setSuccess('');
@@ -73,9 +136,9 @@ export default function ProspectSearch() {
           email: p.email,
           job_title: p.job_title || p.jobTitle || p.title || '',
           company: p.company || p.organization || '',
-          industry: p.industry || form.industry,
+          industry: p.industry || (tab === 'search' ? form.industry : ''),
           seniority: p.seniority || '',
-          country: form.country,
+          country: p.country || (tab === 'search' ? form.country : ''),
         });
         const res = await api.addToCampaign(saved.id, Number(selectedCampaign));
         if (res.ai_error) aiWarning = res.ai_error;
@@ -94,42 +157,87 @@ export default function ProspectSearch() {
     <div>
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-gray-900">Prospect Search</h1>
-        <p className="text-gray-500 text-sm mt-0.5">Find prospects via the Prospeo API</p>
+        <p className="text-gray-500 text-sm mt-0.5">Search via Prospeo API or upload a CSV</p>
       </div>
 
-      <div className="card p-6 mb-6">
-        <form onSubmit={search} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div>
-            <label className="label">Job Title</label>
-            <input className="input" placeholder="e.g. Marketing Manager" value={form.job_title}
-              onChange={e => setForm({ ...form, job_title: e.target.value })} />
-          </div>
-          <div>
-            <label className="label">Industry</label>
-            <select className="input" value={form.industry} onChange={e => setForm({ ...form, industry: e.target.value })}>
-              <option value="">Any</option>
-              {INDUSTRIES.map(i => <option key={i} value={i}>{i}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="label">Country</label>
-            <select className="input" value={form.country} onChange={e => setForm({ ...form, country: e.target.value })}>
-              <option value="UK">United Kingdom</option>
-              <option value="US">United States</option>
-            </select>
-          </div>
-          <div>
-            <label className="label">Number of Results (max 100)</label>
-            <input className="input" type="number" min={1} max={100} value={form.limit}
-              onChange={e => setForm({ ...form, limit: Number(e.target.value) })} />
-          </div>
-          <div className="md:col-span-2 lg:col-span-4">
-            <button type="submit" className="btn-primary" disabled={loading}>
-              {loading ? '🔍 Searching…' : '🔍 Search Prospects'}
-            </button>
-          </div>
-        </form>
+      {/* Tabs */}
+      <div className="flex gap-1 mb-6 border-b border-gray-200">
+        {[{ id: 'search', label: 'Search Prospeo' }, { id: 'csv', label: 'Upload CSV' }].map(t => (
+          <button
+            key={t.id}
+            onClick={() => { setTab(t.id); resetResults(); setCsvError(''); if (fileRef.current) fileRef.current.value = ''; }}
+            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              tab === t.id
+                ? 'border-blue-600 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
       </div>
+
+      {/* Search panel */}
+      {tab === 'search' && (
+        <div className="card p-6 mb-6">
+          <form onSubmit={search} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div>
+              <label className="label">Job Title</label>
+              <input className="input" placeholder="e.g. Marketing Manager" value={form.job_title}
+                onChange={e => setForm({ ...form, job_title: e.target.value })} />
+            </div>
+            <div>
+              <label className="label">Industry</label>
+              <select className="input" value={form.industry} onChange={e => setForm({ ...form, industry: e.target.value })}>
+                <option value="">Any</option>
+                {INDUSTRIES.map(i => <option key={i} value={i}>{i}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">Country</label>
+              <select className="input" value={form.country} onChange={e => setForm({ ...form, country: e.target.value })}>
+                <option value="UK">United Kingdom</option>
+                <option value="US">United States</option>
+              </select>
+            </div>
+            <div>
+              <label className="label">Number of Results (max 100)</label>
+              <input className="input" type="number" min={1} max={100} value={form.limit}
+                onChange={e => setForm({ ...form, limit: Number(e.target.value) })} />
+            </div>
+            <div className="md:col-span-2 lg:col-span-4">
+              <button type="submit" className="btn-primary" disabled={loading}>
+                {loading ? 'Searching...' : 'Search Prospects'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* CSV upload panel */}
+      {tab === 'csv' && (
+        <div className="card p-6 mb-6">
+          <p className="text-sm text-gray-600 mb-4">
+            Upload a CSV with columns: <span className="font-mono text-xs bg-gray-100 px-1 rounded">email</span> (required),
+            plus any of: <span className="font-mono text-xs bg-gray-100 px-1 rounded">first_name</span>{' '}
+            <span className="font-mono text-xs bg-gray-100 px-1 rounded">last_name</span>{' '}
+            <span className="font-mono text-xs bg-gray-100 px-1 rounded">job_title</span>{' '}
+            <span className="font-mono text-xs bg-gray-100 px-1 rounded">company</span>{' '}
+            <span className="font-mono text-xs bg-gray-100 px-1 rounded">industry</span>{' '}
+            <span className="font-mono text-xs bg-gray-100 px-1 rounded">country</span>{' '}
+            <span className="font-mono text-xs bg-gray-100 px-1 rounded">seniority</span>
+          </p>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".csv"
+            onChange={handleFile}
+            className="block w-full text-sm text-gray-600 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
+          />
+          {csvError && <p className="mt-3 text-sm text-red-600">{csvError}</p>}
+          {results.length > 0 && <p className="mt-3 text-sm text-green-600">{results.length} rows loaded from CSV.</p>}
+        </div>
+      )}
 
       {error && <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{error}</div>}
       {success && <div className="mb-4 px-4 py-3 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">{success}</div>}
@@ -141,7 +249,7 @@ export default function ProspectSearch() {
               <button onClick={selectAll} className="btn-secondary text-xs">
                 {selected.size === results.length ? 'Deselect all' : 'Select all'}
               </button>
-              <span className="text-sm text-gray-500">{results.length} prospects found</span>
+              <span className="text-sm text-gray-500">{results.length} prospect{results.length !== 1 ? 's' : ''}</span>
             </div>
 
             {selected.size > 0 && (
@@ -151,7 +259,7 @@ export default function ProspectSearch() {
                   {campaigns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
                 <button className="btn-primary" onClick={addToCampaign} disabled={adding}>
-                  {adding ? 'Adding…' : `Add ${selected.size} to Campaign`}
+                  {adding ? 'Adding...' : `Add ${selected.size} to Campaign`}
                 </button>
               </div>
             )}
@@ -177,7 +285,7 @@ export default function ProspectSearch() {
                         className="rounded border-gray-300 text-blue-600" onClick={e => e.stopPropagation()} />
                     </td>
                     <td className="px-4 py-3 font-medium text-gray-900">
-                      {p.first_name || p.firstName || ''} {p.last_name || p.lastName || ''}
+                      {[p.first_name || p.firstName, p.last_name || p.lastName].filter(Boolean).join(' ') || '—'}
                     </td>
                     <td className="px-4 py-3 text-gray-600">{p.job_title || p.jobTitle || p.title || '—'}</td>
                     <td className="px-4 py-3 text-gray-600">{p.company || p.organization || '—'}</td>
