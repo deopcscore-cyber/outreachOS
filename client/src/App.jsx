@@ -12,6 +12,7 @@ import CampaignDetail from './pages/CampaignDetail';
 import Analytics from './pages/Analytics';
 import Settings from './pages/Settings';
 import Unsubscribe from './pages/Unsubscribe';
+import Outbox from './pages/Outbox';
 
 function AppRoutes() {
   return (
@@ -25,6 +26,7 @@ function AppRoutes() {
       <Route path="/campaigns/:id" element={<ProtectedRoute><Layout><CampaignDetail /></Layout></ProtectedRoute>} />
       <Route path="/analytics" element={<ProtectedRoute><Layout><Analytics /></Layout></ProtectedRoute>} />
       <Route path="/settings" element={<ProtectedRoute><Layout><Settings /></Layout></ProtectedRoute>} />
+      <Route path="/outbox" element={<ProtectedRoute><Layout><Outbox /></Layout></ProtectedRoute>} />
       <Route path="/suppression" element={<ProtectedRoute><Layout><Unsubscribe /></Layout></ProtectedRoute>} />
 
       <Route path="*" element={<Navigate to="/" replace />} />

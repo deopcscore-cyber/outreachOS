@@ -37,6 +37,7 @@ export const api = {
 
   // Campaigns
   getCampaigns: () => req('GET', '/campaigns'),
+  getOutbox: () => req('GET', '/campaigns/outbox'),
   createCampaign: (name) => req('POST', '/campaigns', { name }),
   getCampaign: (id) => req('GET', `/campaigns/${id}`),
   updateCampaign: (id, data) => req('PATCH', `/campaigns/${id}`, data),

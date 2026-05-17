@@ -81,12 +81,15 @@ export default function ProspectSearch() {
   const fileRef = useRef();
   const [csvError, setCsvError] = useState('');
 
-  // Shared state
-  const [results, setResults] = useState([]);
+  // Shared state — results persisted in sessionStorage so navigation doesn't wipe them
+  const [results, setResults] = useState(() => {
+    try { return JSON.parse(sessionStorage.getItem('prospect_results') || '[]'); } catch { return []; }
+  });
   const [selected, setSelected] = useState(new Set());
   const [campaigns, setCampaigns] = useState([]);
   const [selectedCampaign, setSelectedCampaign] = useState('');
   const [adding, setAdding] = useState(false);
+  const [addErrors, setAddErrors] = useState([]);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
@@ -94,7 +97,11 @@ export default function ProspectSearch() {
     api.getCampaigns().then(setCampaigns).catch(console.error);
   }, []);
 
-  const resetResults = () => { setResults([]); setSelected(new Set()); setError(''); setSuccess(''); };
+  useEffect(() => {
+    sessionStorage.setItem('prospect_results', JSON.stringify(results));
+  }, [results]);
+
+  const resetResults = () => { setResults([]); setSelected(new Set()); setError(''); setSuccess(''); setAddErrors([]); };
 
   // --- Search tab ---
   const search = async (e) => {
@@ -153,12 +160,17 @@ export default function ProspectSearch() {
     setAdding(true);
     setError('');
     setSuccess('');
+    setAddErrors([]);
 
     let added = 0;
     let aiWarning = '';
+    const errs = [];
+
     for (const idx of selected) {
       const p = results[idx];
+      const label = p.email || `row ${idx + 1}`;
       try {
+        if (!p.email) throw new Error('No email address');
         const saved = await api.saveProspect({
           first_name: p.first_name || p.firstName || '',
           last_name: p.last_name || p.lastName || '',
@@ -169,16 +181,19 @@ export default function ProspectSearch() {
           seniority: p.seniority || '',
           country: p.country || (tab === 'search' ? form.country : ''),
         });
-        const res = await api.addToCampaign(saved.id, Number(selectedCampaign));
-        if (res.ai_error) aiWarning = res.ai_error;
+        const addRes = await api.addToCampaign(saved.id, Number(selectedCampaign));
+        if (addRes.ai_error) aiWarning = addRes.ai_error;
         added++;
       } catch (err) {
-        console.error(err);
+        errs.push(`${label}: ${err.message}`);
       }
     }
 
     setAdding(false);
-    setSuccess(`Added ${added} prospect${added !== 1 ? 's' : ''} to campaign.${aiWarning ? ' Note: ' + aiWarning : ''}`);
+    if (added > 0) {
+      setSuccess(`Added ${added} prospect${added !== 1 ? 's' : ''} to campaign.${aiWarning ? ' Note: ' + aiWarning : ''}`);
+    }
+    if (errs.length) setAddErrors(errs);
     setSelected(new Set());
   };
 
@@ -270,6 +285,12 @@ export default function ProspectSearch() {
 
       {error && <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{error}</div>}
       {success && <div className="mb-4 px-4 py-3 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">{success}</div>}
+      {addErrors.length > 0 && (
+        <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+          <p className="font-medium mb-1">Some prospects failed to add:</p>
+          <ul className="list-disc list-inside space-y-0.5">{addErrors.map((e, i) => <li key={i}>{e}</li>)}</ul>
+        </div>
+      )}
 
       {results.length > 0 && (
         <div className="card overflow-hidden">
