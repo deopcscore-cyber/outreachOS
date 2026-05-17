@@ -19,7 +19,7 @@ router.post('/search', auth, async (req, res) => {
     if (industry) filters.company_industry = { include: [industry] };
     if (country) {
       const countryName = country === 'UK' ? 'United Kingdom' : country === 'US' ? 'United States' : country;
-      filters.person_location = { include: [countryName] };
+      filters.person_location_search = { include: [countryName] };
     }
 
     // Collect up to maxResults across pages
