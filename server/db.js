@@ -1,10 +1,10 @@
-const { DatabaseSync } = require('node:sqlite');
+const Database = require('better-sqlite3');
 const path = require('path');
 
-const db = new DatabaseSync(process.env.DB_PATH || path.join(__dirname, '..', 'outreachos.db'));
+const db = new Database(process.env.DB_PATH || path.join(__dirname, '..', 'outreachos.db'));
 
-db.exec('PRAGMA journal_mode = WAL');
-db.exec('PRAGMA foreign_keys = ON');
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
