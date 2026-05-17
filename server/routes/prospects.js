@@ -6,33 +6,88 @@ const { generateEmail } = require('../services/aiGenerator');
 // Search via Prospeo API
 router.post('/search', auth, async (req, res) => {
   const { job_title, industry, country, limit = 20 } = req.body;
+  const maxResults = Math.min(Number(limit), 100);
 
   const apiKeyRow = db.prepare("SELECT value FROM settings WHERE user_id = ? AND key = 'prospeo_api_key'").get(req.userId);
   const apiKey = apiKeyRow?.value;
   if (!apiKey) return res.status(400).json({ error: 'Prospeo API key not configured in Settings' });
 
   try {
-    const response = await fetch('https://api.prospeo.io/domain-search', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-KEY': apiKey,
-      },
-      body: JSON.stringify({
-        job_title,
-        industry,
-        country: country === 'UK' ? 'United Kingdom' : 'United States',
-        limit: Math.min(Number(limit), 100),
-      }),
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      return res.status(response.status).json({ error: `Prospeo error: ${errText}` });
+    // Build filters for /search-person
+    const filters = {};
+    if (job_title) filters.person_job_title = { include: [job_title] };
+    if (industry) filters.company_industry = { include: [industry] };
+    if (country) {
+      const countryName = country === 'UK' ? 'United Kingdom' : country === 'US' ? 'United States' : country;
+      filters.person_location = { include: [countryName] };
     }
 
-    const data = await response.json();
-    res.json(data);
+    // Collect up to maxResults across pages
+    const collected = [];
+    let page = 1;
+
+    while (collected.length < maxResults) {
+      const searchRes = await fetch('https://api.prospeo.io/search-person', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-KEY': apiKey },
+        body: JSON.stringify({ page, filters }),
+      });
+
+      if (!searchRes.ok) {
+        const errText = await searchRes.text();
+        return res.status(searchRes.status).json({ error: `Prospeo search error: ${errText}` });
+      }
+
+      const searchData = await searchRes.json();
+      if (!searchData.response?.results?.length) break;
+
+      collected.push(...searchData.response.results);
+      if (searchData.response.results.length < (searchData.response.pagination?.per_page ?? 25)) break;
+      page++;
+    }
+
+    const candidates = collected.slice(0, maxResults);
+
+    // Enrich each person to get their email
+    const enriched = await Promise.all(
+      candidates.map(async (item) => {
+        const person = item.person ?? item;
+        const company = item.company ?? {};
+        const fullName = [person.first_name, person.last_name].filter(Boolean).join(' ');
+        const website = company.website ?? '';
+
+        if (!fullName || !website) return null;
+
+        try {
+          const enrichRes = await fetch('https://api.prospeo.io/enrich-person', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-KEY': apiKey },
+            body: JSON.stringify({ only_verified_email: true, data: { full_name: fullName, company_website: website } }),
+          });
+
+          if (!enrichRes.ok) return null;
+          const enrichData = await enrichRes.json();
+          const email = enrichData.response?.email?.value ?? enrichData.response?.email ?? null;
+          if (!email) return null;
+
+          return {
+            first_name: person.first_name ?? '',
+            last_name: person.last_name ?? '',
+            email,
+            job_title: person.job_title ?? '',
+            company: company.name ?? '',
+            industry: company.industry ?? '',
+            seniority: person.seniority ?? '',
+            country: person.location ?? company.location ?? '',
+          };
+        } catch {
+          return null;
+        }
+      })
+    );
+
+    const results = enriched.filter(Boolean);
+    res.json({ results });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to reach Prospeo API' });
