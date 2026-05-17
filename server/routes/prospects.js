@@ -128,13 +128,12 @@ router.post('/:id/add-to-campaign', auth, async (req, res) => {
   const campaign = db.prepare('SELECT * FROM campaigns WHERE id = ? AND user_id = ?').get(campaign_id, req.userId);
   if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
 
-  // Link prospect to campaign
-  try {
+  // Link prospect to campaign — if already linked, treat as success
+  const alreadyLinked = db.prepare('SELECT id FROM campaign_prospects WHERE campaign_id = ? AND prospect_id = ?').get(campaign_id, prospectId);
+  if (!alreadyLinked) {
     db.prepare(
-      'INSERT OR IGNORE INTO campaign_prospects (campaign_id, prospect_id, next_send_at) VALUES (?, ?, datetime("now"))'
+      'INSERT INTO campaign_prospects (campaign_id, prospect_id, next_send_at) VALUES (?, ?, datetime("now"))'
     ).run(campaign_id, prospectId);
-  } catch (err) {
-    return res.status(400).json({ error: 'Prospect already in this campaign' });
   }
 
   // Generate AI email
