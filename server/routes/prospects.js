@@ -39,10 +39,10 @@ router.post('/search', auth, async (req, res) => {
       }
 
       const searchData = await searchRes.json();
-      if (!searchData.response?.results?.length) break;
+      if (searchData.error || !searchData.results?.length) break;
 
-      collected.push(...searchData.response.results);
-      if (searchData.response.results.length < (searchData.response.pagination?.per_page ?? 25)) break;
+      collected.push(...searchData.results);
+      if (searchData.results.length < (searchData.pagination?.per_page ?? 25)) break;
       page++;
     }
 
@@ -67,8 +67,10 @@ router.post('/search', auth, async (req, res) => {
 
           if (!enrichRes.ok) return null;
           const enrichData = await enrichRes.json();
-          const email = enrichData.response?.email?.value ?? enrichData.response?.email ?? null;
-          if (!email) return null;
+          if (enrichData.error) return null;
+          const emailObj = enrichData.person?.email ?? enrichData.email ?? null;
+          const email = emailObj?.email ?? (typeof emailObj === 'string' ? emailObj : null);
+          if (!email || email.includes('*')) return null;
 
           return {
             first_name: person.first_name ?? '',
