@@ -96,9 +96,20 @@ router.post('/search', auth, async (req, res) => {
   }
 });
 
-// Get all prospects for this user
+// Get all prospects for this user — includes campaign membership info
 router.get('/', auth, (req, res) => {
-  const prospects = db.prepare('SELECT * FROM prospects WHERE user_id = ? ORDER BY created_at DESC').all(req.userId);
+  const prospects = db.prepare(`
+    SELECT p.*,
+      GROUP_CONCAT(DISTINCT c.name) as campaign_names,
+      GROUP_CONCAT(DISTINCT c.id)   as campaign_ids,
+      GROUP_CONCAT(DISTINCT cp.lead_status) as lead_statuses
+    FROM prospects p
+    LEFT JOIN campaign_prospects cp ON cp.prospect_id = p.id
+    LEFT JOIN campaigns c ON c.id = cp.campaign_id AND c.user_id = p.user_id
+    WHERE p.user_id = ?
+    GROUP BY p.id
+    ORDER BY p.created_at DESC
+  `).all(req.userId);
   res.json(prospects);
 });
 
