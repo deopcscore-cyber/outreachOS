@@ -1,9 +1,13 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
 
-function StatCard({ label, value, sub, accent = '#6366f1' }) {
+function StatCard({ label, value, sub, accent = '#6366f1', onClick }) {
   return (
-    <div className="card p-5 flex flex-col gap-3">
+    <div
+      className={`card p-5 flex flex-col gap-3 ${onClick ? 'cursor-pointer hover:border-indigo-200 transition-colors' : ''}`}
+      onClick={onClick}
+    >
       <div className="flex items-center justify-between">
         <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">{label}</p>
         <div className="w-2 h-2 rounded-full" style={{ background: accent }} />
@@ -16,10 +20,33 @@ function StatCard({ label, value, sub, accent = '#6366f1' }) {
   );
 }
 
+function NextSendTimer({ nextSendAt }) {
+  const [label, setLabel] = useState('');
+
+  useEffect(() => {
+    const update = () => {
+      if (!nextSendAt) { setLabel('Ready to send'); return; }
+      const diff = new Date(nextSendAt) - Date.now();
+      if (diff <= 0) { setLabel('Ready to send'); return; }
+      const mins = Math.floor(diff / 60000);
+      const secs = Math.floor((diff % 60000) / 1000);
+      setLabel(mins > 0 ? `Next email in ~${mins}m ${secs}s` : `Next email in ${secs}s`);
+    };
+    update();
+    const t = setInterval(update, 1000);
+    return () => clearInterval(t);
+  }, [nextSendAt]);
+
+  return (
+    <span className="text-xs text-gray-400 font-mono">{label}</span>
+  );
+}
+
 export default function Dashboard() {
   const [stats, setStats] = useState(null);
   const [paused, setPaused] = useState(false);
   const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
 
   useEffect(() => {
     api.getDashboard()
@@ -79,16 +106,25 @@ export default function Dashboard() {
           <StatCard label="Sent today" value={stats.sent_today} sub={`limit: ${stats.daily_limit}`} accent="#6366f1" />
           <StatCard label="Open rate" value={`${stats.open_rate}%`} sub="All time" accent="#10b981" />
           <StatCard label="Reply rate" value={`${stats.reply_rate}%`} sub="All time" accent="#8b5cf6" />
-          <StatCard label="In queue" value={stats.prospects_in_queue} sub="Pending send" accent="#f59e0b" />
+          <StatCard
+            label="Warm leads"
+            value={stats.warm_leads ?? 0}
+            sub="Opened, not replied"
+            accent="#f97316"
+            onClick={() => navigate('/warm-leads')}
+          />
         </div>
       ) : null}
 
-      {/* Send usage bar */}
+      {/* Send usage + drip status */}
       {stats && (
         <div className="card p-5 mb-6">
           <div className="flex items-center justify-between mb-3">
             <p className="text-sm font-semibold text-gray-700">Daily send usage</p>
-            <p className="text-sm text-gray-400">{stats.sent_today} of {stats.daily_limit}</p>
+            <div className="flex items-center gap-4">
+              <NextSendTimer nextSendAt={stats.next_send_at} />
+              <p className="text-sm text-gray-400">{stats.sent_today} of {stats.daily_limit}</p>
+            </div>
           </div>
           <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
             <div
@@ -96,6 +132,9 @@ export default function Dashboard() {
               style={{ width: `${pct}%`, background: pct > 80 ? '#ef4444' : '#6366f1' }}
             />
           </div>
+          <p className="text-xs text-gray-400 mt-2.5">
+            Drip mode: one email sent at a time with 5–10 min random gaps between sends.
+          </p>
         </div>
       )}
 
@@ -108,6 +147,7 @@ export default function Dashboard() {
               { href: '/prospects', label: 'Upload or search for prospects' },
               { href: '/campaigns', label: 'View and manage campaigns' },
               { href: '/outbox', label: 'Preview emails before they send' },
+              { href: '/warm-leads', label: 'See who opened your emails' },
               { href: '/settings', label: 'Configure Gmail and API keys' },
             ].map(({ href, label }) => (
               <a key={href} href={href} className="flex items-center gap-2 text-sm text-indigo-600 hover:text-indigo-800 transition-colors">
@@ -125,7 +165,7 @@ export default function Dashboard() {
               'Upload a CSV of prospects (Prospects page)',
               'Create a campaign and add your prospects',
               'Write your email sequence, review in Outbox',
-              'Emails send automatically every hour',
+              'Emails drip out every 5–10 minutes automatically',
             ].map((step, i) => (
               <li key={i} className="flex items-start gap-3 text-sm text-gray-500">
                 <span className="flex-shrink-0 w-5 h-5 rounded-full bg-indigo-50 text-indigo-600 text-xs font-bold flex items-center justify-center mt-0.5">{i + 1}</span>

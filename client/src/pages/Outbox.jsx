@@ -44,8 +44,9 @@ export default function Outbox() {
       )}
 
       {due.length > 0 && (
-        <div className="mb-2 px-4 py-2 bg-amber-50 border border-amber-200 rounded-lg text-amber-700 text-sm">
-          {due.length} email{due.length !== 1 ? 's are' : ' is'} due now and will go out on the next hourly send.
+        <div className="mb-4 px-4 py-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-700 text-sm flex items-center gap-2">
+          <span>⏳</span>
+          <span>{due.length} email{due.length !== 1 ? 's are' : ' is'} due — will drip out one at a time with 5–10 min gaps.</span>
         </div>
       )}
 

@@ -6,6 +6,7 @@ const navItems = [
   { to: '/prospects', label: 'Prospects', icon: '⊕' },
   { to: '/campaigns', label: 'Campaigns', icon: '✉' },
   { to: '/outbox', label: 'Outbox', icon: '↑' },
+  { to: '/warm-leads', label: 'Warm Leads', icon: '🔥' },
   { to: '/analytics', label: 'Analytics', icon: '↗' },
   { to: '/suppression', label: 'Suppression', icon: '⊘' },
   { to: '/settings', label: 'Settings', icon: '◎' },

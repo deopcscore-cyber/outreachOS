@@ -34,6 +34,7 @@ export const api = {
   saveProspect: (data) => req('POST', '/prospects', data),
   addToCampaign: (id, campaign_id) => req('POST', `/prospects/${id}/add-to-campaign`, { campaign_id }),
   regenerateEmail: (id, campaign_id) => req('POST', `/prospects/${id}/regenerate-email`, { campaign_id }),
+  updateNotes: (id, notes) => req('PATCH', `/prospects/${id}/notes`, { notes }),
 
   // Campaigns
   getCampaigns: () => req('GET', '/campaigns'),
@@ -44,11 +45,14 @@ export const api = {
   deleteCampaign: (id) => req('DELETE', `/campaigns/${id}`),
   saveFollowups: (id, followups) => req('POST', `/campaigns/${id}/followups`, { followups }),
   updateAiEmail: (campaignId, prospectId, data) => req('PATCH', `/campaigns/${campaignId}/ai-email/${prospectId}`, data),
+  updateLeadStatus: (campaignId, prospectId, lead_status) =>
+    req('PATCH', `/campaigns/${campaignId}/prospects/${prospectId}/status`, { lead_status }),
   removeProspect: (campaignId, prospectId) => req('DELETE', `/campaigns/${campaignId}/prospects/${prospectId}`),
 
   // Analytics
   getAnalytics: () => req('GET', '/analytics'),
   getDashboard: () => req('GET', '/analytics/dashboard'),
+  getWarmLeads: () => req('GET', '/analytics/warm-leads'),
 
   // Suppression
   getSuppressionList: () => req('GET', '/unsubscribe'),

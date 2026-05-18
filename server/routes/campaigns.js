@@ -57,10 +57,14 @@ router.get('/:id', auth, (req, res) => {
   if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
 
   const prospects = db.prepare(`
-    SELECT p.*, cp.status, cp.current_email_index, cp.next_send_at, cp.unsubscribed, cp.id as cp_id
+    SELECT p.*, cp.status, cp.current_email_index, cp.next_send_at, cp.unsubscribed, cp.id as cp_id,
+           cp.lead_status, cp.opened_count
     FROM campaign_prospects cp
     JOIN prospects p ON p.id = cp.prospect_id
     WHERE cp.campaign_id = ?
+    ORDER BY
+      CASE cp.lead_status WHEN 'hot' THEN 0 WHEN 'opened' THEN 1 WHEN 'replied' THEN 2 WHEN 'interested' THEN 3 ELSE 4 END,
+      cp.opened_count DESC
   `).all(req.params.id);
 
   // Grab email templates (AI-generated per-prospect for index 0, shared follow-ups for index 1+)
@@ -119,6 +123,16 @@ router.patch('/:id/ai-email/:prospectId', auth, (req, res) => {
   db.prepare(
     'UPDATE email_templates SET subject = ?, body = ? WHERE campaign_id = ? AND prospect_id = ? AND sequence_index = 0'
   ).run(subject, body, req.params.id, req.params.prospectId);
+  res.json({ ok: true });
+});
+
+// Update lead status for a prospect in a campaign
+router.patch('/:id/prospects/:prospectId/status', auth, (req, res) => {
+  const { lead_status } = req.body;
+  const valid = ['pending', 'sent', 'opened', 'hot', 'replied', 'interested', 'not_interested'];
+  if (!valid.includes(lead_status)) return res.status(400).json({ error: 'Invalid status' });
+  db.prepare('UPDATE campaign_prospects SET lead_status = ? WHERE campaign_id = ? AND prospect_id = ?')
+    .run(lead_status, req.params.id, req.params.prospectId);
   res.json({ ok: true });
 });
 

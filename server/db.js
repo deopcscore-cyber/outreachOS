@@ -102,4 +102,9 @@ db.exec(`
   );
 `);
 
+// Safe schema migrations — no-op if columns already exist
+try { db.exec('ALTER TABLE prospects ADD COLUMN notes TEXT'); } catch {}
+try { db.exec("ALTER TABLE campaign_prospects ADD COLUMN lead_status TEXT DEFAULT 'pending'"); } catch {}
+try { db.exec('ALTER TABLE campaign_prospects ADD COLUMN opened_count INTEGER DEFAULT 0'); } catch {}
+
 module.exports = db;

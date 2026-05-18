@@ -22,26 +22,45 @@ app.use('/api/campaigns', require('./routes/campaigns'));
 app.use('/api/analytics', require('./routes/analytics'));
 app.use('/api/unsubscribe', require('./routes/unsubscribe'));
 
-// Tracking pixel
+// Tracking pixel — updates open status and lead_status
 app.get('/api/track/open/:trackingId', (req, res) => {
   const { trackingId } = req.params;
-  db.prepare("UPDATE sent_emails SET opened_at = datetime('now') WHERE tracking_id = ? AND opened_at IS NULL").run(trackingId);
-  // 1x1 transparent GIF
+  const updated = db.prepare(
+    "UPDATE sent_emails SET opened_at = datetime('now') WHERE tracking_id = ? AND opened_at IS NULL"
+  ).run(trackingId);
+
+  if (updated.changes > 0) {
+    const se = db.prepare('SELECT campaign_prospect_id FROM sent_emails WHERE tracking_id = ?').get(trackingId);
+    if (se) {
+      // Increment open count and promote lead_status (don't overwrite replied/interested/not_interested)
+      db.prepare(`
+        UPDATE campaign_prospects
+        SET
+          opened_count = opened_count + 1,
+          lead_status = CASE
+            WHEN lead_status IN ('replied', 'interested', 'not_interested') THEN lead_status
+            WHEN (opened_count + 1) >= 2 THEN 'hot'
+            ELSE 'opened'
+          END
+        WHERE id = ?
+      `).run(se.campaign_prospect_id);
+    }
+  }
+
   const pixel = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
   res.writeHead(200, { 'Content-Type': 'image/gif', 'Content-Length': pixel.length, 'Cache-Control': 'no-store' });
   res.end(pixel);
 });
 
-// Catch-all: send index.html for any non-API route (React handles routing client-side)
+// Catch-all: serve React app for non-API routes
 app.get('*', (req, res) => {
   if (!req.path.startsWith('/api')) {
     res.sendFile(path.join(clientDist, 'index.html'));
   }
 });
 
-// Hourly email send job
-cron.schedule('0 * * * *', async () => {
-  console.log('[Cron] Running email send job...');
+// Drip send — runs every minute, sends at most one email per 5–10 min per user
+cron.schedule('* * * * *', async () => {
   try {
     await sendDueEmails();
   } catch (err) {

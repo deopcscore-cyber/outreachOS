@@ -151,6 +151,14 @@ router.post('/:id/add-to-campaign', auth, async (req, res) => {
   res.json({ ok: true, ai_email: aiResult, ai_error: aiError });
 });
 
+// Update prospect notes
+router.patch('/:id/notes', auth, (req, res) => {
+  const { notes } = req.body;
+  db.prepare('UPDATE prospects SET notes = ? WHERE id = ? AND user_id = ?')
+    .run(notes ?? '', req.params.id, req.userId);
+  res.json({ ok: true });
+});
+
 // Regenerate AI email for a prospect in a campaign
 router.post('/:id/regenerate-email', auth, async (req, res) => {
   const { campaign_id } = req.body;

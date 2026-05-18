@@ -13,6 +13,7 @@ import Analytics from './pages/Analytics';
 import Settings from './pages/Settings';
 import Unsubscribe from './pages/Unsubscribe';
 import Outbox from './pages/Outbox';
+import WarmLeads from './pages/WarmLeads';
 
 function AppRoutes() {
   return (
@@ -27,6 +28,7 @@ function AppRoutes() {
       <Route path="/analytics" element={<ProtectedRoute><Layout><Analytics /></Layout></ProtectedRoute>} />
       <Route path="/settings" element={<ProtectedRoute><Layout><Settings /></Layout></ProtectedRoute>} />
       <Route path="/outbox" element={<ProtectedRoute><Layout><Outbox /></Layout></ProtectedRoute>} />
+      <Route path="/warm-leads" element={<ProtectedRoute><Layout><WarmLeads /></Layout></ProtectedRoute>} />
       <Route path="/suppression" element={<ProtectedRoute><Layout><Unsubscribe /></Layout></ProtectedRoute>} />
 
       <Route path="*" element={<Navigate to="/" replace />} />

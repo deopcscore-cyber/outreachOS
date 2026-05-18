@@ -22,11 +22,21 @@ function createTransporter(settings) {
 }
 
 function replacePlaceholders(text, prospect) {
-  return text
-    .replace(/\{first_name\}/gi, prospect.first_name || '')
-    .replace(/\{last_name\}/gi, prospect.last_name || '')
-    .replace(/\{company\}/gi, prospect.company || '')
-    .replace(/\{job_title\}/gi, prospect.job_title || '');
+  const tokens = {
+    first_name: prospect.first_name || '',
+    last_name: prospect.last_name || '',
+    company: prospect.company || '',
+    job_title: prospect.job_title || '',
+    industry: prospect.industry || '',
+    seniority: prospect.seniority || '',
+    country: prospect.country || '',
+  };
+  let result = text;
+  for (const [key, value] of Object.entries(tokens)) {
+    result = result.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'gi'), value);
+    result = result.replace(new RegExp(`\\{${key}\\}`, 'gi'), value);
+  }
+  return result;
 }
 
 function isWithinWindow(startTime, endTime) {
@@ -37,7 +47,14 @@ function isWithinWindow(startTime, endTime) {
   return nowMins >= (sh * 60 + sm) && nowMins <= (eh * 60 + em);
 }
 
-// Base query for due prospects — shared between new and follow-up queries
+function setNextSendCooldown(userId) {
+  const delayMinutes = Math.floor(Math.random() * 6) + 5; // random 5–10 min
+  const nextAt = new Date(Date.now() + delayMinutes * 60 * 1000).toISOString();
+  db.prepare("INSERT OR REPLACE INTO settings (user_id, key, value) VALUES (?, 'next_send_allowed_at', ?)")
+    .run(userId, nextAt);
+  return { nextAt, delayMinutes };
+}
+
 const DUE_WHERE = `
   FROM campaign_prospects cp
   JOIN prospects p ON p.id = cp.prospect_id
@@ -65,54 +82,60 @@ async function processUserEmails(userId) {
   const settings = getSettings(userId);
   if (!settings.gmail_email || !settings.gmail_password) return;
 
+  // Sending time window
   const startTime = settings.send_window_start || '09:00';
   const endTime = settings.send_window_end || '17:00';
   if (!isWithinWindow(startTime, endTime)) return;
 
-  const transporter = createTransporter(settings);
-  const today = new Date().toISOString().slice(0, 10);
+  // Anti-spam cooldown — only allow one email per random 5–10 min window
+  const nextAllowed = settings.next_send_allowed_at;
+  if (nextAllowed && new Date(nextAllowed) > new Date()) return;
 
-  // --- Follow-ups (sequence_index > 0): no daily limit ---
-  const followUpCPs = db.prepare(`
+  const transporter = createTransporter(settings);
+
+  // Priority 1: follow-ups (already scheduled, don't count against daily limit)
+  const followUpCP = db.prepare(`
     SELECT cp.*, p.*, cp.id as cp_id, p.id as prospect_id, c.id as campaign_id
     ${DUE_WHERE}
       AND cp.current_email_index > 0
-  `).all(userId, userId);
+    ORDER BY cp.next_send_at ASC
+    LIMIT 1
+  `).get(userId, userId);
 
-  for (const cp of followUpCPs) {
-    try {
-      await sendNextEmail(transporter, cp, settings);
-    } catch (err) {
-      console.error(`Follow-up failed for ${cp.email}:`, err.message);
-    }
+  if (followUpCP) {
+    await sendNextEmail(transporter, followUpCP, settings);
+    const { delayMinutes } = setNextSendCooldown(userId);
+    console.log(`[Drip] Follow-up sent to ${followUpCP.email}. Next send in ~${delayMinutes} min.`);
+    return;
   }
 
-  // --- New outreach (sequence_index = 0): respect daily limit ---
+  // Priority 2: new outreach — respect daily limit
   const dailyLimit = Number(settings.daily_send_limit || 30);
+  const today = new Date().toISOString().slice(0, 10);
   const newSentToday = db.prepare(`
-    SELECT COUNT(*) as count
-    FROM sent_emails se
+    SELECT COUNT(*) as count FROM sent_emails se
     JOIN campaign_prospects cp ON cp.id = se.campaign_prospect_id
     JOIN campaigns c ON c.id = cp.campaign_id
-    WHERE c.user_id = ? AND date(se.sent_at) = ? AND cp.current_email_index = 0
+    WHERE c.user_id = ? AND date(se.sent_at) = ? AND se.bounced = 0
   `).get(userId, today);
 
-  let remaining = dailyLimit - newSentToday.count;
-  if (remaining <= 0) return;
+  if (newSentToday.count >= dailyLimit) {
+    console.log(`[Drip] Daily limit (${dailyLimit}) reached for user ${userId}. Skipping.`);
+    return;
+  }
 
-  const newCPs = db.prepare(`
+  const newCP = db.prepare(`
     SELECT cp.*, p.*, cp.id as cp_id, p.id as prospect_id, c.id as campaign_id
     ${DUE_WHERE}
       AND cp.current_email_index = 0
-    LIMIT ?
-  `).all(userId, userId, remaining);
+    ORDER BY cp.next_send_at ASC
+    LIMIT 1
+  `).get(userId, userId);
 
-  for (const cp of newCPs) {
-    try {
-      await sendNextEmail(transporter, cp, settings);
-    } catch (err) {
-      console.error(`Initial email failed for ${cp.email}:`, err.message);
-    }
+  if (newCP) {
+    await sendNextEmail(transporter, newCP, settings);
+    const { delayMinutes } = setNextSendCooldown(userId);
+    console.log(`[Drip] New email sent to ${newCP.email}. Next send in ~${delayMinutes} min.`);
   }
 }
 
@@ -140,7 +163,6 @@ async function sendNextEmail(transporter, cp, settings) {
   const pixelUrl = `${baseUrl}/api/track/open/${trackingId}`;
   const unsubUrl = `${baseUrl}/api/unsubscribe/opt-out?email=${encodeURIComponent(cp.email)}&uid=${trackingId}`;
 
-  // For follow-ups: reply to the original thread using stored subject + Message-ID
   const isFollowUp = emailIndex > 0 && cp.thread_message_id;
   const subject = isFollowUp
     ? `Re: ${cp.thread_subject || replacePlaceholders(template.subject, cp)}`
@@ -158,7 +180,6 @@ async function sendNextEmail(transporter, cp, settings) {
     html,
   };
 
-  // Thread headers — makes the follow-up appear inside the original conversation
   if (isFollowUp) {
     mailOptions.inReplyTo = cp.thread_message_id;
     mailOptions.references = cp.thread_message_id;
@@ -172,14 +193,18 @@ async function sendNextEmail(transporter, cp, settings) {
       'INSERT INTO sent_emails (campaign_prospect_id, template_id, subject, body, tracking_id, message_id) VALUES (?, ?, ?, ?, ?, ?)'
     ).run(cp.cp_id, template.id, subject, template.body, trackingId, sentMessageId);
 
-    // After email 1, save Message-ID and subject for threading all follow-ups
     if (emailIndex === 0 && sentMessageId) {
       db.prepare(
         'UPDATE campaign_prospects SET thread_message_id = ?, thread_subject = ? WHERE id = ?'
       ).run(sentMessageId, subject, cp.cp_id);
     }
 
-    // Schedule next email or mark complete
+    // Update lead_status to 'sent' if still pending
+    db.prepare(`
+      UPDATE campaign_prospects SET lead_status = 'sent'
+      WHERE id = ? AND lead_status = 'pending'
+    `).run(cp.cp_id);
+
     const nextTemplate = db.prepare(
       'SELECT * FROM email_templates WHERE campaign_id = ? AND sequence_index = ? AND prospect_id IS NULL'
     ).get(cp.campaign_id, emailIndex + 1);
