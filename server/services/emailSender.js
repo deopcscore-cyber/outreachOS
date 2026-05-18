@@ -68,7 +68,7 @@ const DUE_WHERE = `
 `;
 
 async function sendDueEmails() {
-  const users = db.prepare('SELECT DISTINCT user_id FROM settings WHERE key = ? AND value != ""').all('gmail_email');
+  const users = db.prepare("SELECT DISTINCT user_id FROM settings WHERE key = ? AND value != ''").all('gmail_email');
   for (const { user_id } of users) {
     try {
       await processUserEmails(user_id);
