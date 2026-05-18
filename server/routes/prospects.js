@@ -132,7 +132,7 @@ router.post('/:id/add-to-campaign', auth, async (req, res) => {
   const alreadyLinked = db.prepare('SELECT id FROM campaign_prospects WHERE campaign_id = ? AND prospect_id = ?').get(campaign_id, prospectId);
   if (!alreadyLinked) {
     db.prepare(
-      'INSERT INTO campaign_prospects (campaign_id, prospect_id, next_send_at) VALUES (?, ?, datetime("now"))'
+      "INSERT INTO campaign_prospects (campaign_id, prospect_id, next_send_at) VALUES (?, ?, datetime('now'))"
     ).run(campaign_id, prospectId);
   }
 
