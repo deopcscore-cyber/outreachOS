@@ -1,4 +1,4 @@
-const nodemailer = require('nodemailer');
+const { google } = require('googleapis');
 const db = require('../db');
 const { v4: uuidv4 } = require('uuid');
 
@@ -9,16 +9,39 @@ function getSettings(userId) {
   return s;
 }
 
-function createTransporter(settings) {
-  return nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 587,
-    secure: false,
-    auth: {
-      user: settings.gmail_email,
-      pass: settings.gmail_password,
-    },
-  });
+function createGmailClient(settings) {
+  const oauth2Client = new google.auth.OAuth2(
+    settings.google_client_id,
+    settings.google_client_secret,
+    'https://developers.google.com/oauthplayground'
+  );
+  oauth2Client.setCredentials({ refresh_token: settings.google_refresh_token });
+  return google.gmail({ version: 'v1', auth: oauth2Client });
+}
+
+async function sendViaGmailAPI(gmail, { from, to, subject, html, messageId, inReplyTo, threadId }) {
+  const headers = [
+    `From: ${from}`,
+    `To: ${to}`,
+    `Subject: ${subject}`,
+    `Message-ID: ${messageId}`,
+    'MIME-Version: 1.0',
+    'Content-Type: text/html; charset=utf-8',
+  ];
+
+  if (inReplyTo) {
+    headers.push(`In-Reply-To: ${inReplyTo}`);
+    headers.push(`References: ${inReplyTo}`);
+  }
+
+  const emailContent = headers.join('\r\n') + '\r\n\r\n' + html;
+  const encodedEmail = Buffer.from(emailContent).toString('base64url');
+
+  const requestBody = { raw: encodedEmail };
+  if (threadId) requestBody.threadId = threadId;
+
+  const result = await gmail.users.messages.send({ userId: 'me', requestBody });
+  return result.data; // { id, threadId }
 }
 
 function replacePlaceholders(text, prospect) {
@@ -68,7 +91,7 @@ const DUE_WHERE = `
 `;
 
 async function sendDueEmails() {
-  const users = db.prepare("SELECT DISTINCT user_id FROM settings WHERE key = ? AND value != ''").all('gmail_email');
+  const users = db.prepare("SELECT DISTINCT user_id FROM settings WHERE key = ? AND value != ''").all('google_refresh_token');
   for (const { user_id } of users) {
     try {
       await processUserEmails(user_id);
@@ -80,23 +103,23 @@ async function sendDueEmails() {
 
 async function processUserEmails(userId) {
   const settings = getSettings(userId);
-  if (!settings.gmail_email || !settings.gmail_password) return;
+  if (!settings.google_client_id || !settings.google_client_secret || !settings.google_refresh_token) return;
 
   // Respect manual pause
   if (settings.sending_paused === 'true') return;
 
-  // Sending time window (server runs UTC — set window in UTC in Settings)
+  // Sending time window (server runs UTC)
   const startTime = settings.send_window_start || '09:00';
   const endTime = settings.send_window_end || '17:00';
   if (!isWithinWindow(startTime, endTime)) return;
 
-  // Anti-spam cooldown — only allow one email per random 5–10 min window
+  // Anti-spam cooldown
   const nextAllowed = settings.next_send_allowed_at;
   if (nextAllowed && new Date(nextAllowed) > new Date()) return;
 
-  const transporter = createTransporter(settings);
+  const gmail = createGmailClient(settings);
 
-  // Priority 1: follow-ups (already scheduled, don't count against daily limit)
+  // Priority 1: follow-ups
   const followUpCP = db.prepare(`
     SELECT cp.*, p.*, cp.id as cp_id, p.id as prospect_id, c.id as campaign_id
     ${DUE_WHERE}
@@ -106,7 +129,7 @@ async function processUserEmails(userId) {
   `).get(userId, userId);
 
   if (followUpCP) {
-    await sendNextEmail(transporter, followUpCP, settings);
+    await sendNextEmail(gmail, followUpCP, settings);
     const { delayMinutes } = setNextSendCooldown(userId);
     console.log(`[Drip] Follow-up sent to ${followUpCP.email}. Next send in ~${delayMinutes} min.`);
     return;
@@ -136,13 +159,13 @@ async function processUserEmails(userId) {
   `).get(userId, userId);
 
   if (newCP) {
-    await sendNextEmail(transporter, newCP, settings);
+    await sendNextEmail(gmail, newCP, settings);
     const { delayMinutes } = setNextSendCooldown(userId);
     console.log(`[Drip] New email sent to ${newCP.email}. Next send in ~${delayMinutes} min.`);
   }
 }
 
-async function sendNextEmail(transporter, cp, settings) {
+async function sendNextEmail(gmail, cp, settings) {
   const emailIndex = cp.current_email_index;
 
   let template;
@@ -162,6 +185,7 @@ async function sendNextEmail(transporter, cp, settings) {
   }
 
   const trackingId = uuidv4();
+  const messageId = `<${uuidv4()}@outreachos.mail>`;
   const baseUrl = process.env.BASE_URL || `http://localhost:${process.env.PORT || 3001}`;
   const pixelUrl = `${baseUrl}/api/track/open/${trackingId}`;
   const unsubUrl = `${baseUrl}/api/unsubscribe/opt-out?email=${encodeURIComponent(cp.email)}&uid=${trackingId}`;
@@ -176,30 +200,25 @@ async function sendNextEmail(transporter, cp, settings) {
     + `<br><br>---<br><a href="${unsubUrl}">Unsubscribe</a>`
     + `<img src="${pixelUrl}" width="1" height="1" style="display:none" />`;
 
-  const mailOptions = {
-    from: settings.gmail_email,
-    to: cp.email,
-    subject,
-    html,
-  };
-
-  if (isFollowUp) {
-    mailOptions.inReplyTo = cp.thread_message_id;
-    mailOptions.references = cp.thread_message_id;
-  }
-
   try {
-    const info = await transporter.sendMail(mailOptions);
-    const sentMessageId = info.messageId || null;
+    const sent = await sendViaGmailAPI(gmail, {
+      from: settings.gmail_email,
+      to: cp.email,
+      subject,
+      html,
+      messageId,
+      inReplyTo: isFollowUp ? cp.thread_message_id : null,
+      threadId: isFollowUp ? cp.gmail_thread_id : null,
+    });
 
     db.prepare(
       'INSERT INTO sent_emails (campaign_prospect_id, template_id, subject, body, tracking_id, message_id) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(cp.cp_id, template.id, subject, template.body, trackingId, sentMessageId);
+    ).run(cp.cp_id, template.id, subject, template.body, trackingId, messageId);
 
-    if (emailIndex === 0 && sentMessageId) {
+    if (emailIndex === 0) {
       db.prepare(
-        'UPDATE campaign_prospects SET thread_message_id = ?, thread_subject = ? WHERE id = ?'
-      ).run(sentMessageId, subject, cp.cp_id);
+        'UPDATE campaign_prospects SET thread_message_id = ?, thread_subject = ?, gmail_thread_id = ? WHERE id = ?'
+      ).run(messageId, subject, sent.threadId || null, cp.cp_id);
     }
 
     // Update lead_status to 'sent' if still pending
@@ -229,4 +248,17 @@ async function sendNextEmail(transporter, cp, settings) {
   }
 }
 
-module.exports = { sendDueEmails };
+// Exported helper so campaigns.js can send PDF emails via Gmail API too
+async function sendGmailMessage(settings, { to, subject, html }) {
+  const gmail = createGmailClient(settings);
+  const messageId = `<${uuidv4()}@outreachos.mail>`;
+  return sendViaGmailAPI(gmail, {
+    from: settings.gmail_email,
+    to,
+    subject,
+    html,
+    messageId,
+  });
+}
+
+module.exports = { sendDueEmails, sendGmailMessage };

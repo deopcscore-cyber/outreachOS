@@ -17,7 +17,9 @@ export default function Settings() {
     send_window_start: '09:00',
     send_window_end: '17:00',
     gmail_email: '',
-    gmail_password: '',
+    google_client_id: '',
+    google_client_secret: '',
+    google_refresh_token: '',
     prospeo_api_key: '',
     anthropic_api_key: '',
     ai_system_prompt: '',
@@ -84,16 +86,46 @@ export default function Settings() {
           </p>
         </div>
 
-        {/* Gmail */}
+        {/* Gmail API */}
         <div className="card p-6 space-y-4">
-          <h2 className="font-semibold text-gray-800">Gmail SMTP</h2>
-          <Field label="Gmail address" hint="The Gmail account you'll send from">
+          <div className="flex items-start justify-between">
+            <div>
+              <h2 className="font-semibold text-gray-800">Gmail API (OAuth2)</h2>
+              <p className="text-xs text-gray-400 mt-0.5">Sends from your Gmail over HTTPS — no SMTP port issues</p>
+            </div>
+            <span className="text-xs bg-emerald-50 text-emerald-600 font-semibold px-2 py-1 rounded-full">Required</span>
+          </div>
+
+          {/* Step by step instructions */}
+          <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-2 text-xs text-gray-600">
+            <p className="font-semibold text-gray-700 mb-2">How to get your credentials (5 min setup):</p>
+            <ol className="space-y-1.5 list-none">
+              <li><span className="font-semibold text-indigo-600">1.</span> Go to <a href="https://console.cloud.google.com" target="_blank" rel="noreferrer" className="underline text-indigo-600">console.cloud.google.com</a> → create a new project</li>
+              <li><span className="font-semibold text-indigo-600">2.</span> Search "Gmail API" → Enable it</li>
+              <li><span className="font-semibold text-indigo-600">3.</span> APIs &amp; Services → Credentials → Create Credentials → OAuth client ID</li>
+              <li><span className="font-semibold text-indigo-600">4.</span> Application type: <strong>Desktop app</strong> → Copy Client ID &amp; Client Secret</li>
+              <li><span className="font-semibold text-indigo-600">5.</span> Go to <a href="https://developers.google.com/oauthplayground" target="_blank" rel="noreferrer" className="underline text-indigo-600">developers.google.com/oauthplayground</a></li>
+              <li><span className="font-semibold text-indigo-600">6.</span> Click ⚙️ gear icon → tick "Use your own OAuth credentials" → paste Client ID &amp; Secret</li>
+              <li><span className="font-semibold text-indigo-600">7.</span> In the left panel, find <strong>Gmail API v1</strong> → select <code className="bg-gray-200 px-1 rounded">https://mail.google.com/</code> → Authorise</li>
+              <li><span className="font-semibold text-indigo-600">8.</span> Click "Exchange authorization code for tokens" → copy the <strong>Refresh token</strong></li>
+            </ol>
+          </div>
+
+          <Field label="Gmail address" hint="The Gmail account you authorised above">
             <input className="input" type="email" value={settings.gmail_email}
               onChange={e => set('gmail_email', e.target.value)} placeholder="you@gmail.com" />
           </Field>
-          <Field label="App password" hint="Generate at myaccount.google.com → Security → App passwords">
-            <input className="input" type="password" value={settings.gmail_password}
-              onChange={e => set('gmail_password', e.target.value)} placeholder="xxxx xxxx xxxx xxxx" />
+          <Field label="Client ID">
+            <input className="input" type="password" value={settings.google_client_id}
+              onChange={e => set('google_client_id', e.target.value)} placeholder="1234567890-abc….apps.googleusercontent.com" />
+          </Field>
+          <Field label="Client Secret">
+            <input className="input" type="password" value={settings.google_client_secret}
+              onChange={e => set('google_client_secret', e.target.value)} placeholder="GOCSPX-…" />
+          </Field>
+          <Field label="Refresh Token">
+            <input className="input" type="password" value={settings.google_refresh_token}
+              onChange={e => set('google_refresh_token', e.target.value)} placeholder="1//04…" />
           </Field>
         </div>
 

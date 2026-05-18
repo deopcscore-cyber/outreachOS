@@ -106,5 +106,6 @@ db.exec(`
 try { db.exec('ALTER TABLE prospects ADD COLUMN notes TEXT'); } catch {}
 try { db.exec("ALTER TABLE campaign_prospects ADD COLUMN lead_status TEXT DEFAULT 'pending'"); } catch {}
 try { db.exec('ALTER TABLE campaign_prospects ADD COLUMN opened_count INTEGER DEFAULT 0'); } catch {}
+try { db.exec('ALTER TABLE campaign_prospects ADD COLUMN gmail_thread_id TEXT'); } catch {}
 
 module.exports = db;

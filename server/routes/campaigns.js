@@ -138,7 +138,7 @@ router.patch('/:id/prospects/:prospectId/status', auth, (req, res) => {
 
 // Send the ebook PDF to a prospect and mark as pdf_sent
 router.post('/:id/prospects/:prospectId/send-pdf', auth, async (req, res) => {
-  const nodemailer = require('nodemailer');
+  const { sendGmailMessage } = require('../services/emailSender');
 
   const campaign = db.prepare('SELECT * FROM campaigns WHERE id = ? AND user_id = ?').get(req.params.id, req.userId);
   if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
@@ -150,7 +150,7 @@ router.post('/:id/prospects/:prospectId/send-pdf', auth, async (req, res) => {
   const s = {};
   for (const r of rows) s[r.key] = r.value;
 
-  if (!s.gmail_email || !s.gmail_password) return res.status(400).json({ error: 'Gmail not configured in Settings' });
+  if (!s.google_client_id || !s.google_refresh_token) return res.status(400).json({ error: 'Gmail API not configured in Settings' });
   if (!s.ebook_url) return res.status(400).json({ error: 'Ebook URL not set in Settings → Ebook Delivery' });
 
   const firstName = prospect.first_name || 'there';
@@ -162,12 +162,7 @@ router.post('/:id/prospects/:prospectId/send-pdf', auth, async (req, res) => {
   const body    = (s.ebook_email_body    || defaultBody   ).replace(/{{first_name}}/gi, firstName);
 
   try {
-    const transporter = nodemailer.createTransport({
-      host: 'smtp.gmail.com', port: 587, secure: false,
-      auth: { user: s.gmail_email, pass: s.gmail_password },
-    });
-    await transporter.sendMail({
-      from: s.gmail_email,
+    await sendGmailMessage(s, {
       to: prospect.email,
       subject,
       html: body.replace(/\n/g, '<br>'),
