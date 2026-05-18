@@ -1,18 +1,17 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 
-function StatCard({ label, value, sub, color = 'blue' }) {
-  const colors = {
-    blue: 'bg-blue-50 text-blue-700 border-blue-100',
-    green: 'bg-green-50 text-green-700 border-green-100',
-    purple: 'bg-purple-50 text-purple-700 border-purple-100',
-    orange: 'bg-orange-50 text-orange-700 border-orange-100',
-  };
+function StatCard({ label, value, sub, accent = '#6366f1' }) {
   return (
-    <div className={`card p-6 border ${colors[color]}`}>
-      <p className="text-sm font-medium opacity-75">{label}</p>
-      <p className="text-3xl font-bold mt-1">{value}</p>
-      {sub && <p className="text-xs opacity-60 mt-1">{sub}</p>}
+    <div className="card p-5 flex flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">{label}</p>
+        <div className="w-2 h-2 rounded-full" style={{ background: accent }} />
+      </div>
+      <div>
+        <p className="text-3xl font-bold text-gray-900">{value}</p>
+        {sub && <p className="text-xs text-gray-400 mt-1">{sub}</p>}
+      </div>
     </div>
   );
 }
@@ -28,8 +27,7 @@ export default function Dashboard() {
       .catch(console.error)
       .finally(() => setLoading(false));
 
-    const p = localStorage.getItem('sendingPaused');
-    if (p === 'true') setPaused(true);
+    if (localStorage.getItem('sendingPaused') === 'true') setPaused(true);
   }, []);
 
   const togglePause = () => {
@@ -38,105 +36,102 @@ export default function Dashboard() {
     localStorage.setItem('sendingPaused', String(next));
   };
 
+  const pct = stats ? Math.min(100, (stats.sent_today / stats.daily_limit) * 100) : 0;
+
   return (
     <div>
-      <div className="flex items-center justify-between mb-8">
+      {/* Header */}
+      <div className="flex items-start justify-between mb-8">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-          <p className="text-gray-500 text-sm mt-0.5">Overview of your outreach activity</p>
+          <p className="text-gray-400 text-sm mt-0.5">Overview of your outreach</p>
         </div>
         <button
           onClick={togglePause}
-          className={`px-5 py-2.5 rounded-lg font-medium text-sm transition-colors ${
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all shadow-sm ${
             paused
-              ? 'bg-green-600 text-white hover:bg-green-700'
-              : 'bg-red-100 text-red-700 hover:bg-red-200'
+              ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+              : 'bg-red-50 text-red-600 border border-red-200 hover:bg-red-100'
           }`}
         >
-          {paused ? '▶ Resume Sending' : '⏸ Pause All Sending'}
+          {paused ? '▶  Resume sending' : '⏸  Pause sending'}
         </button>
       </div>
 
       {paused && (
-        <div className="mb-6 px-4 py-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-sm">
-          ⚠️ Sending is currently paused. No emails will be sent until you resume.
+        <div className="mb-6 px-4 py-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-700 text-sm flex items-center gap-2">
+          <span>⚠</span> Sending is paused — no emails will go out until you resume.
         </div>
       )}
 
+      {/* Stats */}
       {loading ? (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
           {[...Array(4)].map((_, i) => (
-            <div key={i} className="card p-6 animate-pulse">
-              <div className="h-4 bg-gray-200 rounded w-3/4 mb-3" />
-              <div className="h-8 bg-gray-200 rounded w-1/2" />
+            <div key={i} className="card p-5 animate-pulse h-28">
+              <div className="h-3 bg-gray-100 rounded w-2/3 mb-4" />
+              <div className="h-8 bg-gray-100 rounded w-1/2" />
             </div>
           ))}
         </div>
       ) : stats ? (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard
-            label="Emails Sent Today"
-            value={stats.sent_today}
-            sub={`of ${stats.daily_limit} daily limit`}
-            color="blue"
-          />
-          <StatCard
-            label="Open Rate"
-            value={`${stats.open_rate}%`}
-            sub="All time"
-            color="green"
-          />
-          <StatCard
-            label="Reply Rate"
-            value={`${stats.reply_rate}%`}
-            sub="All time"
-            color="purple"
-          />
-          <StatCard
-            label="In Queue"
-            value={stats.prospects_in_queue}
-            sub="Prospects pending send"
-            color="orange"
-          />
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <StatCard label="Sent today" value={stats.sent_today} sub={`limit: ${stats.daily_limit}`} accent="#6366f1" />
+          <StatCard label="Open rate" value={`${stats.open_rate}%`} sub="All time" accent="#10b981" />
+          <StatCard label="Reply rate" value={`${stats.reply_rate}%`} sub="All time" accent="#8b5cf6" />
+          <StatCard label="In queue" value={stats.prospects_in_queue} sub="Pending send" accent="#f59e0b" />
         </div>
-      ) : (
-        <p className="text-gray-500">Could not load stats.</p>
-      )}
+      ) : null}
 
+      {/* Send usage bar */}
       {stats && (
-        <div className="mt-8 card p-6">
-          <h2 className="font-semibold text-gray-800 mb-4">Daily send usage</h2>
-          <div className="flex items-center gap-4">
-            <div className="flex-1 bg-gray-100 rounded-full h-4 overflow-hidden">
-              <div
-                className="h-4 bg-blue-500 rounded-full transition-all"
-                style={{ width: `${Math.min(100, (stats.sent_today / stats.daily_limit) * 100)}%` }}
-              />
-            </div>
-            <span className="text-sm text-gray-600 whitespace-nowrap">
-              {stats.sent_today} / {stats.daily_limit}
-            </span>
+        <div className="card p-5 mb-6">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-sm font-semibold text-gray-700">Daily send usage</p>
+            <p className="text-sm text-gray-400">{stats.sent_today} of {stats.daily_limit}</p>
+          </div>
+          <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+            <div
+              className="h-2 rounded-full transition-all"
+              style={{ width: `${pct}%`, background: pct > 80 ? '#ef4444' : '#6366f1' }}
+            />
           </div>
         </div>
       )}
 
-      <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="card p-6">
-          <h2 className="font-semibold text-gray-800 mb-3">Quick actions</h2>
-          <div className="space-y-2">
-            <a href="/prospects" className="flex items-center gap-2 text-sm text-blue-600 hover:underline">🔍 Search for new prospects</a>
-            <a href="/campaigns" className="flex items-center gap-2 text-sm text-blue-600 hover:underline">📬 View campaigns</a>
-            <a href="/settings" className="flex items-center gap-2 text-sm text-blue-600 hover:underline">⚙️ Configure sending settings</a>
+      {/* Bottom cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="card p-5">
+          <p className="text-sm font-semibold text-gray-700 mb-4">Quick actions</p>
+          <div className="space-y-3">
+            {[
+              { href: '/prospects', label: 'Upload or search for prospects' },
+              { href: '/campaigns', label: 'View and manage campaigns' },
+              { href: '/outbox', label: 'Preview emails before they send' },
+              { href: '/settings', label: 'Configure Gmail and API keys' },
+            ].map(({ href, label }) => (
+              <a key={href} href={href} className="flex items-center gap-2 text-sm text-indigo-600 hover:text-indigo-800 transition-colors">
+                <span className="text-gray-300">→</span> {label}
+              </a>
+            ))}
           </div>
         </div>
-        <div className="card p-6">
-          <h2 className="font-semibold text-gray-800 mb-3">Getting started</h2>
-          <ol className="space-y-2 text-sm text-gray-600 list-decimal list-inside">
-            <li>Add your Gmail and API keys in Settings</li>
-            <li>Search for prospects via the Prospect Search page</li>
-            <li>Create a campaign and add prospects</li>
-            <li>Review AI-generated emails and set follow-ups</li>
-            <li>Watch the emails send automatically</li>
+
+        <div className="card p-5">
+          <p className="text-sm font-semibold text-gray-700 mb-4">Getting started</p>
+          <ol className="space-y-2.5">
+            {[
+              'Add your Gmail and API keys in Settings',
+              'Upload a CSV of prospects (Prospects page)',
+              'Create a campaign and add your prospects',
+              'Write your email sequence, review in Outbox',
+              'Emails send automatically every hour',
+            ].map((step, i) => (
+              <li key={i} className="flex items-start gap-3 text-sm text-gray-500">
+                <span className="flex-shrink-0 w-5 h-5 rounded-full bg-indigo-50 text-indigo-600 text-xs font-bold flex items-center justify-center mt-0.5">{i + 1}</span>
+                {step}
+              </li>
+            ))}
           </ol>
         </div>
       </div>
