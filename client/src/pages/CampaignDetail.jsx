@@ -1,34 +1,41 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 
-const LEAD_STATUS_CONFIG = {
-  hot:           { label: 'Hot',          bg: 'bg-orange-100', text: 'text-orange-700' },
-  interested:    { label: 'Interested',   bg: 'bg-purple-100', text: 'text-purple-700' },
-  replied:       { label: 'Replied',      bg: 'bg-green-100',  text: 'text-green-700'  },
-  opened:        { label: 'Opened',       bg: 'bg-blue-100',   text: 'text-blue-700'   },
-  sent:          { label: 'Sent',         bg: 'bg-gray-100',   text: 'text-gray-600'   },
-  pending:       { label: 'Pending',      bg: 'bg-gray-50',    text: 'text-gray-500'   },
-  not_interested:{ label: 'Not interested', bg: 'bg-red-50',   text: 'text-red-500'    },
+// ─── Stage config ───────────────────────────────────────────────────────────
+const STAGES = [
+  { key: 'pending',       label: 'Queue',          color: '#94a3b8' },
+  { key: 'sent',          label: 'Outreach Sent',  color: '#6366f1' },
+  { key: 'opened',        label: 'Opened',         color: '#3b82f6' },
+  { key: 'hot',           label: 'Hot',            color: '#f97316' },
+  { key: 'replied',       label: 'Replied',        color: '#8b5cf6' },
+  { key: 'interested',    label: 'Interested',     color: '#10b981' },
+  { key: 'not_interested',label: 'Not Interested', color: '#ef4444' },
+];
+
+const STAGE_MAP = Object.fromEntries(STAGES.map(s => [s.key, s]));
+
+const LEAD_BADGE = {
+  hot:           { label: 'Hot 🔥',       cls: 'bg-orange-100 text-orange-700' },
+  interested:    { label: 'Interested',   cls: 'bg-purple-100 text-purple-700' },
+  replied:       { label: 'Replied',      cls: 'bg-violet-100 text-violet-700' },
+  opened:        { label: 'Opened',       cls: 'bg-green-100 text-green-700'   },
+  sent:          { label: 'Sent',         cls: 'bg-indigo-50 text-indigo-600'  },
+  not_interested:{ label: 'Not interested', cls: 'bg-red-50 text-red-500'     },
 };
 
-const CP_STATUS_CONFIG = {
-  pending:   { label: 'In sequence', color: 'text-indigo-600' },
-  completed: { label: 'Completed',   color: 'text-green-600'  },
-  bounced:   { label: 'Bounced',     color: 'text-red-500'    },
-};
-
-const LEAD_STATUSES = ['pending', 'sent', 'opened', 'hot', 'replied', 'interested', 'not_interested'];
-
-function LeadBadge({ status }) {
-  const cfg = LEAD_STATUS_CONFIG[status] || LEAD_STATUS_CONFIG.pending;
-  return (
-    <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${cfg.bg} ${cfg.text}`}>
-      {cfg.label}
-    </span>
-  );
+function timeAgo(dt) {
+  if (!dt) return null;
+  const diff = Date.now() - new Date(dt).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return 'Just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
 }
 
+// ─── Email editor ────────────────────────────────────────────────────────────
 function EmailEditor({ subject, body, onChange, placeholder = '' }) {
   return (
     <div className="space-y-2">
@@ -39,8 +46,8 @@ function EmailEditor({ subject, body, onChange, placeholder = '' }) {
         onChange={e => onChange({ subject: e.target.value, body })}
       />
       <textarea
-        className="input min-h-[140px] resize-y font-mono text-xs leading-relaxed"
-        placeholder={placeholder || 'Email body…'}
+        className="input min-h-[130px] resize-y font-mono text-xs leading-relaxed"
+        placeholder={placeholder}
         value={body}
         onChange={e => onChange({ subject, body: e.target.value })}
       />
@@ -48,11 +55,138 @@ function EmailEditor({ subject, body, onChange, placeholder = '' }) {
   );
 }
 
+// ─── Prospect card (board view) ───────────────────────────────────────────────
+function ProspectCard({ prospect, aiEmail, isExpanded, onToggle, onStatusChange, onRegenerate, onSaveEmail, onRemove, onSaveNote, editingAi, onAiChange, regenerating }) {
+  const [noteDraft, setNoteDraft] = useState(prospect.notes || '');
+  const [noteOpen, setNoteOpen] = useState(false);
+  const [savingNote, setSavingNote] = useState(false);
+  const badge = LEAD_BADGE[prospect.lead_status];
+  const emailPreview = (aiEmail?.body || '').replace(/#+\s/g, '').slice(0, 100);
+
+  const handleSaveNote = async () => {
+    setSavingNote(true);
+    try { await onSaveNote(prospect.id, noteDraft); } finally { setSavingNote(false); }
+  };
+
+  return (
+    <div className={`bg-white rounded-xl border transition-all ${isExpanded ? 'border-indigo-300 shadow-md' : 'border-gray-200 hover:border-gray-300 hover:shadow-sm'}`}>
+      {/* Card header — always visible */}
+      <div className="p-4 cursor-pointer" onClick={onToggle}>
+        <div className="flex items-start justify-between gap-2 mb-1.5">
+          <p className="font-semibold text-gray-900 text-sm leading-tight">
+            {[prospect.first_name, prospect.last_name].filter(Boolean).join(' ') || prospect.email}
+          </p>
+          {badge && (
+            <span className={`flex-shrink-0 text-xs font-semibold px-2 py-0.5 rounded-full ${badge.cls}`}>
+              {badge.label}
+            </span>
+          )}
+        </div>
+        <p className="text-xs text-gray-500 truncate">
+          {[prospect.job_title, prospect.company].filter(Boolean).join(' · ')}
+        </p>
+        {emailPreview && (
+          <p className="text-xs text-gray-400 mt-2 line-clamp-2 leading-relaxed">{emailPreview}</p>
+        )}
+        <div className="flex items-center justify-between mt-3">
+          <p className="text-xs text-gray-400 font-mono">{prospect.email}</p>
+          {prospect.opened_count > 0 && (
+            <span className="text-xs text-gray-400">{prospect.opened_count} open{prospect.opened_count !== 1 ? 's' : ''}</span>
+          )}
+        </div>
+      </div>
+
+      {/* Expanded detail */}
+      {isExpanded && (
+        <div className="border-t border-gray-100 p-4 space-y-4">
+          {/* Status + actions row */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <select
+              className="input !w-auto !py-1 text-xs flex-shrink-0"
+              value={prospect.lead_status || 'pending'}
+              onChange={e => onStatusChange(prospect.id, e.target.value)}
+            >
+              {STAGES.map(s => (
+                <option key={s.key} value={s.key}>{s.label}</option>
+              ))}
+            </select>
+            <button
+              className="text-xs px-2.5 py-1 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
+              onClick={() => setNoteOpen(o => !o)}
+            >
+              {noteOpen ? 'Hide note' : (prospect.notes ? 'Note ✓' : 'Add note')}
+            </button>
+            <div className="flex-1" />
+            <button
+              className="text-xs px-2.5 py-1 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
+              onClick={() => onRegenerate(prospect.id)}
+              disabled={regenerating}
+            >
+              {regenerating ? '…' : '✨ Regen'}
+            </button>
+            <button
+              className="text-xs px-2.5 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+              onClick={() => onSaveEmail(prospect.id)}
+            >
+              Save
+            </button>
+            <button
+              className="text-xs px-2.5 py-1 rounded-lg text-red-500 hover:bg-red-50 border border-transparent hover:border-red-100 transition-colors"
+              onClick={() => onRemove(prospect.id)}
+            >
+              Remove
+            </button>
+          </div>
+
+          {/* Notes */}
+          {noteOpen && (
+            <div>
+              <textarea
+                className="input min-h-[64px] resize-y text-xs"
+                placeholder="Notes about this prospect…"
+                value={noteDraft}
+                onChange={e => setNoteDraft(e.target.value)}
+              />
+              <button
+                className="text-xs px-2.5 py-1 rounded-lg bg-indigo-600 text-white mt-1.5"
+                disabled={savingNote}
+                onClick={handleSaveNote}
+              >
+                {savingNote ? 'Saving…' : 'Save note'}
+              </button>
+            </div>
+          )}
+
+          {/* Email editor */}
+          <div>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Email 1 (AI-generated)</p>
+            {editingAi?.subject || editingAi?.body ? (
+              <EmailEditor
+                subject={editingAi.subject || ''}
+                body={editingAi.body || ''}
+                placeholder="Write email body…"
+                onChange={({ subject, body }) => onAiChange(prospect.id, { subject, body })}
+              />
+            ) : (
+              <div className="border-2 border-dashed border-gray-100 rounded-xl p-4 text-center text-gray-400 text-xs">
+                No email yet. Click <strong>✨ Regen</strong> to generate with AI.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Main component ────────────────────────────────────────────────────────────
 export default function CampaignDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [viewMode, setViewMode] = useState('board'); // 'board' | 'list'
+  const [stageFilter, setStageFilter] = useState('all');
   const [editingAi, setEditingAi] = useState({});
   const [followups, setFollowups] = useState([
     { sequence_index: 1, subject: '', body: '', delay_days: 3 },
@@ -60,15 +194,13 @@ export default function CampaignDetail() {
   ]);
   const [saving, setSaving] = useState(false);
   const [regenerating, setRegenerating] = useState({});
-  const [msg, setMsg] = useState({ text: '', type: 'info' });
+  const [expandedCard, setExpandedCard] = useState(null);
+  const [toast, setToast] = useState({ msg: '', type: 'success' });
   const [updatingStatus, setUpdatingStatus] = useState({});
-  const [expandedNotes, setExpandedNotes] = useState({});
-  const [noteDrafts, setNoteDrafts] = useState({});
-  const [savingNote, setSavingNote] = useState({});
 
-  const showMsg = (text, type = 'info') => {
-    setMsg({ text, type });
-    setTimeout(() => setMsg({ text: '', type: 'info' }), 3000);
+  const showToast = (msg, type = 'success') => {
+    setToast({ msg, type });
+    setTimeout(() => setToast({ msg: '', type: 'success' }), 2500);
   };
 
   const load = async () => {
@@ -78,8 +210,8 @@ export default function CampaignDetail() {
       setData(d);
       if (d.followUps?.length) {
         setFollowups(prev => prev.map(fu => {
-          const existing = d.followUps.find(f => f.sequence_index === fu.sequence_index);
-          return existing ? { ...fu, ...existing } : fu;
+          const ex = d.followUps.find(f => f.sequence_index === fu.sequence_index);
+          return ex ? { ...fu, ...ex } : fu;
         }));
       }
       const ae = {};
@@ -101,10 +233,8 @@ export default function CampaignDetail() {
     if (!edit) return;
     try {
       await api.updateAiEmail(id, prospectId, edit);
-      showMsg('Email saved.', 'success');
-    } catch (err) {
-      showMsg('Error: ' + err.message, 'error');
-    }
+      showToast('Email saved.');
+    } catch (err) { showToast(err.message, 'error'); }
   };
 
   const regenerate = async (prospectId) => {
@@ -113,26 +243,19 @@ export default function CampaignDetail() {
       const res = await api.regenerateEmail(prospectId, Number(id));
       if (res.ai_email) {
         setEditingAi(prev => ({ ...prev, [prospectId]: res.ai_email }));
-        showMsg('Email regenerated.', 'success');
+        showToast('Email regenerated.');
       }
-    } catch (err) {
-      showMsg('Error: ' + err.message, 'error');
-    } finally {
-      setRegenerating(prev => ({ ...prev, [prospectId]: false }));
-    }
+    } catch (err) { showToast(err.message, 'error'); }
+    finally { setRegenerating(prev => ({ ...prev, [prospectId]: false })); }
   };
 
   const saveFollowups = async () => {
     setSaving(true);
     try {
-      const toSave = followups.filter(f => f.subject || f.body);
-      await api.saveFollowups(id, toSave);
-      showMsg('Follow-ups saved.', 'success');
-    } catch (err) {
-      showMsg('Error: ' + err.message, 'error');
-    } finally {
-      setSaving(false);
-    }
+      await api.saveFollowups(id, followups.filter(f => f.subject || f.body));
+      showToast('Follow-ups saved.');
+    } catch (err) { showToast(err.message, 'error'); }
+    finally { setSaving(false); }
   };
 
   const removeProspect = async (prospectId) => {
@@ -151,56 +274,76 @@ export default function CampaignDetail() {
           p.id === prospectId ? { ...p, lead_status: status } : p
         ),
       }));
-    } catch (err) {
-      showMsg('Error: ' + err.message, 'error');
-    } finally {
-      setUpdatingStatus(prev => ({ ...prev, [prospectId]: false }));
-    }
+    } catch (err) { showToast(err.message, 'error'); }
+    finally { setUpdatingStatus(prev => ({ ...prev, [prospectId]: false })); }
   };
 
-  const saveNote = async (prospectId) => {
-    const note = noteDrafts[prospectId] ?? '';
-    setSavingNote(prev => ({ ...prev, [prospectId]: true }));
-    try {
-      await api.updateNotes(prospectId, note);
-      setData(prev => ({
-        ...prev,
-        prospects: prev.prospects.map(p =>
-          p.id === prospectId ? { ...p, notes: note } : p
-        ),
-      }));
-      showMsg('Note saved.', 'success');
-    } catch (err) {
-      showMsg('Error saving note.', 'error');
-    } finally {
-      setSavingNote(prev => ({ ...prev, [prospectId]: false }));
-    }
+  const saveNote = async (prospectId, notes) => {
+    await api.updateNotes(prospectId, notes);
+    setData(prev => ({
+      ...prev,
+      prospects: prev.prospects.map(p => p.id === prospectId ? { ...p, notes } : p),
+    }));
+    showToast('Note saved.');
   };
 
-  if (loading) return <div className="animate-pulse p-8 text-gray-400">Loading…</div>;
+  if (loading) return (
+    <div className="space-y-4 animate-pulse">
+      <div className="h-10 bg-gray-100 rounded-xl w-1/3" />
+      <div className="flex gap-3">
+        {[1,2,3,4,5].map(i => <div key={i} className="h-8 bg-gray-100 rounded-full w-28" />)}
+      </div>
+      <div className="flex gap-4">
+        {[1,2,3,4].map(i => <div key={i} className="flex-1 h-64 bg-gray-100 rounded-xl" />)}
+      </div>
+    </div>
+  );
   if (!data) return <div className="p-8 text-red-500">Campaign not found.</div>;
 
   const { campaign, prospects, aiEmails } = data;
 
-  const msgBg = {
-    success: 'bg-emerald-50 border-emerald-200 text-emerald-700',
-    error: 'bg-red-50 border-red-200 text-red-700',
-    info: 'bg-indigo-50 border-indigo-200 text-indigo-700',
-  };
+  // Stage counts for tabs
+  const stageCounts = {};
+  for (const s of STAGES) stageCounts[s.key] = 0;
+  for (const p of prospects) {
+    const k = p.lead_status || 'pending';
+    stageCounts[k] = (stageCounts[k] || 0) + 1;
+  }
+
+  const filteredProspects = stageFilter === 'all'
+    ? prospects
+    : prospects.filter(p => (p.lead_status || 'pending') === stageFilter);
+
+  // Group for board
+  const grouped = {};
+  for (const s of STAGES) {
+    grouped[s.key] = prospects.filter(p => (p.lead_status || 'pending') === s.key);
+  }
+
+  const toastBg = toast.type === 'error'
+    ? 'bg-red-600'
+    : 'bg-gray-900';
 
   return (
     <div>
-      <div className="flex items-center gap-3 mb-8">
-        <button onClick={() => navigate('/campaigns')} className="text-gray-400 hover:text-gray-700 text-sm transition-colors">
+      {/* Toast */}
+      {toast.msg && (
+        <div className={`fixed bottom-6 right-6 z-50 px-4 py-3 rounded-xl text-white text-sm font-medium shadow-lg ${toastBg}`}>
+          {toast.msg}
+        </div>
+      )}
+
+      {/* Header */}
+      <div className="flex items-center gap-4 mb-6">
+        <button onClick={() => navigate('/campaigns')} className="text-gray-400 hover:text-gray-700 transition-colors text-sm">
           ← Back
         </button>
         <div className="flex-1 min-w-0">
-          <h1 className="text-2xl font-bold text-gray-900 truncate">{campaign.name}</h1>
-          <p className="text-gray-400 text-sm">{prospects.length} prospect{prospects.length !== 1 ? 's' : ''}</p>
+          <h1 className="text-xl font-bold text-gray-900 truncate">{campaign.name}</h1>
         </div>
         <button
           onClick={() => api.updateCampaign(id, { status: campaign.status === 'active' ? 'paused' : 'active' }).then(load)}
-          className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+          className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
             campaign.status === 'active'
               ? 'border-gray-200 text-gray-600 hover:bg-gray-50'
               : 'border-emerald-200 text-emerald-700 bg-emerald-50 hover:bg-emerald-100'
@@ -210,178 +353,233 @@ export default function CampaignDetail() {
         </button>
       </div>
 
-      {msg.text && (
-        <div className={`mb-4 px-4 py-2 border rounded-lg text-sm ${msgBg[msg.type]}`}>{msg.text}</div>
-      )}
-
-      {/* Follow-up sequence */}
-      <div className="card p-6 mb-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="font-semibold text-gray-800">Follow-up Sequence</h2>
-          <p className="text-xs text-gray-400">
-            Tokens:{' '}
-            {['{{first_name}}', '{{company}}', '{{job_title}}'].map(t => (
-              <code key={t} className="bg-gray-100 px-1 py-0.5 rounded text-gray-600 mr-1">{t}</code>
-            ))}
-          </p>
-        </div>
-        <div className="space-y-6">
-          {followups.map((fu, idx) => (
-            <div key={fu.sequence_index} className="border border-gray-100 rounded-xl p-4">
-              <div className="flex items-center gap-3 mb-3">
-                <span className="bg-indigo-100 text-indigo-700 text-xs font-bold px-2.5 py-1 rounded-full">
-                  Email {fu.sequence_index + 1}
-                </span>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-gray-400">Send after</span>
-                  <input
-                    type="number"
-                    min={1}
-                    className="input !w-16 text-center text-xs"
-                    value={fu.delay_days}
-                    onChange={e => {
-                      const next = [...followups];
-                      next[idx] = { ...fu, delay_days: Number(e.target.value) };
-                      setFollowups(next);
-                    }}
-                  />
-                  <span className="text-xs text-gray-400">days</span>
-                </div>
-              </div>
-              <EmailEditor
-                subject={fu.subject}
-                body={fu.body}
-                placeholder={`Follow-up email ${fu.sequence_index + 1}… Use {{first_name}}, {{company}}, {{job_title}}`}
-                onChange={({ subject, body }) => {
-                  const next = [...followups];
-                  next[idx] = { ...fu, subject, body };
-                  setFollowups(next);
-                }}
-              />
-            </div>
-          ))}
-        </div>
-        <button className="btn-primary mt-4" onClick={saveFollowups} disabled={saving}>
-          {saving ? 'Saving…' : 'Save Follow-ups'}
+      {/* Stage tabs */}
+      <div className="flex items-center gap-2 flex-wrap mb-5">
+        <button
+          onClick={() => setStageFilter('all')}
+          className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+            stageFilter === 'all'
+              ? 'bg-gray-900 text-white border-gray-900'
+              : 'border-gray-200 text-gray-600 hover:border-gray-300 bg-white'
+          }`}
+        >
+          All Stages · {prospects.length}
         </button>
+        {STAGES.filter(s => stageCounts[s.key] > 0 || stageFilter === s.key).map(s => (
+          <button
+            key={s.key}
+            onClick={() => setStageFilter(s.key)}
+            className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+              stageFilter === s.key
+                ? 'text-white border-transparent'
+                : 'border-gray-200 text-gray-600 hover:border-gray-300 bg-white'
+            }`}
+            style={stageFilter === s.key ? { background: s.color, borderColor: s.color } : {}}
+          >
+            {stageCounts[s.key]} {s.label}
+          </button>
+        ))}
+
+        <div className="ml-auto flex items-center gap-1 bg-gray-100 rounded-lg p-0.5">
+          <button
+            onClick={() => setViewMode('board')}
+            className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${viewMode === 'board' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
+          >
+            ⊞ Board
+          </button>
+          <button
+            onClick={() => setViewMode('list')}
+            className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${viewMode === 'list' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
+          >
+            ☰ List
+          </button>
+        </div>
       </div>
 
-      {/* Prospects */}
-      <div className="card overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-          <h2 className="font-semibold text-gray-800">Prospects & Email 1</h2>
-          <p className="text-xs text-gray-400">{prospects.length} total</p>
-        </div>
-
-        {prospects.length === 0 ? (
-          <div className="p-12 text-center text-gray-400">
-            <p className="text-3xl mb-3">⊕</p>
-            <p>No prospects yet. Add some from the Prospects page.</p>
-          </div>
-        ) : (
-          <div className="divide-y divide-gray-50">
-            {prospects.map(p => {
-              const aiEdit = editingAi[p.id] || aiEmails[p.id] || { subject: '', body: '' };
-              const isRegen = regenerating[p.id];
-              const isNoteOpen = expandedNotes[p.id];
-              const draft = noteDrafts[p.id] ?? p.notes ?? '';
-              const cpStatus = CP_STATUS_CONFIG[p.status] || CP_STATUS_CONFIG.pending;
-
+      {/* Board view */}
+      {viewMode === 'board' && (
+        <div className="overflow-x-auto -mx-2 px-2">
+          <div className="flex gap-4 min-w-max pb-6">
+            {STAGES.map(stage => {
+              const cards = grouped[stage.key];
               return (
-                <div key={p.id} className="p-6">
-                  {/* Prospect header */}
-                  <div className="flex items-start justify-between gap-4 mb-4">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2.5 flex-wrap mb-1">
-                        <p className="font-semibold text-gray-900">{p.first_name} {p.last_name}</p>
-                        <LeadBadge status={p.lead_status || 'pending'} />
-                        {p.opened_count > 0 && (
-                          <span className="text-xs text-gray-400">{p.opened_count} open{p.opened_count !== 1 ? 's' : ''}</span>
-                        )}
-                        <span className={`text-xs font-medium ${cpStatus.color}`}>{cpStatus.label}</span>
-                      </div>
-                      <p className="text-sm text-gray-500">{p.job_title} at {p.company}</p>
-                      <p className="text-xs text-gray-400 font-mono mt-0.5">{p.email}</p>
-                    </div>
-
-                    <div className="flex items-center gap-2 flex-shrink-0 flex-wrap justify-end">
-                      <select
-                        className="input !w-auto !py-1 text-xs"
-                        value={p.lead_status || 'pending'}
-                        disabled={updatingStatus[p.id]}
-                        onChange={e => updateLeadStatus(p.id, e.target.value)}
+                <div key={stage.key} className="w-72 flex-shrink-0 flex flex-col">
+                  {/* Column header */}
+                  <div className="mb-3">
+                    <div className="h-0.5 rounded-full mb-3" style={{ background: stage.color }} />
+                    <div className="flex items-center justify-between px-0.5">
+                      <span className="font-semibold text-gray-700 text-sm">{stage.label}</span>
+                      <span
+                        className="text-xs font-bold px-2 py-0.5 rounded-full text-white"
+                        style={{ background: cards.length > 0 ? stage.color : '#cbd5e1' }}
                       >
-                        {LEAD_STATUSES.map(s => (
-                          <option key={s} value={s}>{LEAD_STATUS_CONFIG[s]?.label || s}</option>
-                        ))}
-                      </select>
-                      <button
-                        className="btn-secondary text-xs"
-                        onClick={() => {
-                          if (!isNoteOpen && !noteDrafts.hasOwnProperty(p.id)) {
-                            setNoteDrafts(prev => ({ ...prev, [p.id]: p.notes || '' }));
-                          }
-                          setExpandedNotes(prev => ({ ...prev, [p.id]: !isNoteOpen }));
-                        }}
-                      >
-                        {isNoteOpen ? 'Hide note' : (p.notes ? 'Note ✓' : 'Note')}
-                      </button>
-                      <button
-                        className="btn-secondary text-xs"
-                        onClick={() => regenerate(p.id)}
-                        disabled={isRegen}
-                      >
-                        {isRegen ? 'Generating…' : '✨ Regen'}
-                      </button>
-                      <button className="btn-primary text-xs" onClick={() => saveAiEmail(p.id)}>
-                        Save
-                      </button>
-                      <button className="btn-danger text-xs" onClick={() => removeProspect(p.id)}>
-                        ×
-                      </button>
+                        {cards.length}
+                      </span>
                     </div>
                   </div>
 
-                  {/* Notes */}
-                  {isNoteOpen && (
-                    <div className="mb-4 p-4 bg-amber-50 border border-amber-100 rounded-xl">
-                      <textarea
-                        className="input min-h-[72px] resize-y text-sm bg-white"
-                        placeholder="Notes about this prospect…"
-                        value={draft}
-                        onChange={e => setNoteDrafts(prev => ({ ...prev, [p.id]: e.target.value }))}
+                  {/* Cards */}
+                  <div className="space-y-3">
+                    {cards.map(p => (
+                      <ProspectCard
+                        key={p.id}
+                        prospect={p}
+                        aiEmail={editingAi[p.id] || aiEmails[p.id]}
+                        isExpanded={expandedCard === p.id}
+                        onToggle={() => setExpandedCard(expandedCard === p.id ? null : p.id)}
+                        onStatusChange={updateLeadStatus}
+                        onRegenerate={regenerate}
+                        onSaveEmail={saveAiEmail}
+                        onRemove={removeProspect}
+                        onSaveNote={saveNote}
+                        editingAi={editingAi[p.id] || aiEmails[p.id]}
+                        onAiChange={(pid, val) => setEditingAi(prev => ({ ...prev, [pid]: val }))}
+                        regenerating={regenerating[p.id]}
                       />
-                      <button
-                        className="btn-primary text-xs mt-2"
-                        disabled={savingNote[p.id]}
-                        onClick={() => saveNote(p.id)}
-                      >
-                        {savingNote[p.id] ? 'Saving…' : 'Save note'}
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Email editor */}
-                  {aiEdit.subject || aiEdit.body ? (
-                    <EmailEditor
-                      subject={aiEdit.subject}
-                      body={aiEdit.body}
-                      placeholder="No email generated yet — click Regen or write manually"
-                      onChange={({ subject, body }) =>
-                        setEditingAi(prev => ({ ...prev, [p.id]: { subject, body } }))
-                      }
-                    />
-                  ) : (
-                    <div className="border border-dashed border-gray-200 rounded-xl p-4 text-center text-gray-400 text-sm">
-                      No email yet. Click <strong>✨ Regen</strong> to generate one with AI, or type manually.
-                    </div>
-                  )}
+                    ))}
+                    {cards.length === 0 && (
+                      <div className="border-2 border-dashed border-gray-100 rounded-xl py-10 text-center text-gray-400 text-xs">
+                        No candidates
+                      </div>
+                    )}
+                  </div>
                 </div>
               );
             })}
           </div>
-        )}
-      </div>
+        </div>
+      )}
+
+      {/* List view */}
+      {viewMode === 'list' && (
+        <div className="space-y-4">
+          {/* Follow-up sequence */}
+          <div className="card p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="font-semibold text-gray-800">Follow-up Sequence</h2>
+              <p className="text-xs text-gray-400">
+                Tokens:{' '}
+                {['{{first_name}}', '{{company}}', '{{job_title}}'].map(t => (
+                  <code key={t} className="bg-gray-100 px-1 rounded text-gray-600 mr-1">{t}</code>
+                ))}
+              </p>
+            </div>
+            <div className="space-y-5">
+              {followups.map((fu, idx) => (
+                <div key={fu.sequence_index} className="border border-gray-100 rounded-xl p-4">
+                  <div className="flex items-center gap-3 mb-3">
+                    <span className="bg-indigo-100 text-indigo-700 text-xs font-bold px-2.5 py-1 rounded-full">
+                      Email {fu.sequence_index + 1}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-gray-400">Send after</span>
+                      <input
+                        type="number" min={1}
+                        className="input !w-14 text-center text-xs"
+                        value={fu.delay_days}
+                        onChange={e => {
+                          const next = [...followups];
+                          next[idx] = { ...fu, delay_days: Number(e.target.value) };
+                          setFollowups(next);
+                        }}
+                      />
+                      <span className="text-xs text-gray-400">days</span>
+                    </div>
+                  </div>
+                  <EmailEditor
+                    subject={fu.subject}
+                    body={fu.body}
+                    placeholder={`Follow-up ${fu.sequence_index + 1}… Use {{first_name}}, {{company}}, {{job_title}}`}
+                    onChange={({ subject, body }) => {
+                      const next = [...followups];
+                      next[idx] = { ...fu, subject, body };
+                      setFollowups(next);
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
+            <button className="btn-primary mt-4 text-sm" onClick={saveFollowups} disabled={saving}>
+              {saving ? 'Saving…' : 'Save Follow-ups'}
+            </button>
+          </div>
+
+          {/* Prospect list */}
+          <div className="card overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+              <h2 className="font-semibold text-gray-800">
+                Prospects
+                {stageFilter !== 'all' && (
+                  <span className="ml-2 text-xs font-normal text-gray-400">
+                    — {STAGE_MAP[stageFilter]?.label}
+                  </span>
+                )}
+              </h2>
+              <p className="text-xs text-gray-400">{filteredProspects.length} shown</p>
+            </div>
+
+            {filteredProspects.length === 0 ? (
+              <div className="p-12 text-center text-gray-400">
+                <p>No prospects in this stage.</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-gray-50">
+                {filteredProspects.map(p => {
+                  const aiEdit = editingAi[p.id] || aiEmails[p.id] || { subject: '', body: '' };
+                  const badge = LEAD_BADGE[p.lead_status];
+                  return (
+                    <div key={p.id} className="p-6">
+                      <div className="flex items-start justify-between gap-4 mb-4">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2.5 flex-wrap mb-1">
+                            <p className="font-semibold text-gray-900">{p.first_name} {p.last_name}</p>
+                            {badge && (
+                              <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${badge.cls}`}>
+                                {badge.label}
+                              </span>
+                            )}
+                            {p.opened_count > 0 && (
+                              <span className="text-xs text-gray-400">{p.opened_count} opens</span>
+                            )}
+                          </div>
+                          <p className="text-sm text-gray-500">{p.job_title} at {p.company}</p>
+                          <p className="text-xs text-gray-400 font-mono mt-0.5">{p.email}</p>
+                        </div>
+                        <div className="flex items-center gap-2 flex-shrink-0 flex-wrap justify-end">
+                          <select
+                            className="input !w-auto !py-1 text-xs"
+                            value={p.lead_status || 'pending'}
+                            disabled={updatingStatus[p.id]}
+                            onChange={e => updateLeadStatus(p.id, e.target.value)}
+                          >
+                            {STAGES.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
+                          </select>
+                          <button className="btn-secondary text-xs py-1" onClick={() => regenerate(p.id)} disabled={regenerating[p.id]}>
+                            {regenerating[p.id] ? '…' : '✨ Regen'}
+                          </button>
+                          <button className="btn-primary text-xs py-1" onClick={() => saveAiEmail(p.id)}>Save</button>
+                          <button className="btn-danger text-xs py-1" onClick={() => removeProspect(p.id)}>×</button>
+                        </div>
+                      </div>
+                      {aiEdit.subject || aiEdit.body ? (
+                        <EmailEditor
+                          subject={aiEdit.subject}
+                          body={aiEdit.body}
+                          onChange={({ subject, body }) => setEditingAi(prev => ({ ...prev, [p.id]: { subject, body } }))}
+                        />
+                      ) : (
+                        <div className="border-2 border-dashed border-gray-100 rounded-xl p-4 text-center text-gray-400 text-sm">
+                          No email yet — click <strong>✨ Regen</strong> to generate with AI.
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
