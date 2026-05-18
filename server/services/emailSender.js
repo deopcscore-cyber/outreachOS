@@ -82,7 +82,10 @@ async function processUserEmails(userId) {
   const settings = getSettings(userId);
   if (!settings.gmail_email || !settings.gmail_password) return;
 
-  // Sending time window
+  // Respect manual pause
+  if (settings.sending_paused === 'true') return;
+
+  // Sending time window (server runs UTC — set window in UTC in Settings)
   const startTime = settings.send_window_start || '09:00';
   const endTime = settings.send_window_end || '17:00';
   if (!isWithinWindow(startTime, endTime)) return;

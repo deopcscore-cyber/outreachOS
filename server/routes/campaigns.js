@@ -129,11 +129,57 @@ router.patch('/:id/ai-email/:prospectId', auth, (req, res) => {
 // Update lead status for a prospect in a campaign
 router.patch('/:id/prospects/:prospectId/status', auth, (req, res) => {
   const { lead_status } = req.body;
-  const valid = ['pending', 'sent', 'opened', 'hot', 'replied', 'interested', 'not_interested'];
+  const valid = ['pending', 'sent', 'opened', 'hot', 'replied', 'pdf_sent', 'interested', 'not_interested'];
   if (!valid.includes(lead_status)) return res.status(400).json({ error: 'Invalid status' });
   db.prepare('UPDATE campaign_prospects SET lead_status = ? WHERE campaign_id = ? AND prospect_id = ?')
     .run(lead_status, req.params.id, req.params.prospectId);
   res.json({ ok: true });
+});
+
+// Send the ebook PDF to a prospect and mark as pdf_sent
+router.post('/:id/prospects/:prospectId/send-pdf', auth, async (req, res) => {
+  const nodemailer = require('nodemailer');
+
+  const campaign = db.prepare('SELECT * FROM campaigns WHERE id = ? AND user_id = ?').get(req.params.id, req.userId);
+  if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
+
+  const prospect = db.prepare('SELECT * FROM prospects WHERE id = ? AND user_id = ?').get(req.params.prospectId, req.userId);
+  if (!prospect) return res.status(404).json({ error: 'Prospect not found' });
+
+  const rows = db.prepare('SELECT key, value FROM settings WHERE user_id = ?').all(req.userId);
+  const s = {};
+  for (const r of rows) s[r.key] = r.value;
+
+  if (!s.gmail_email || !s.gmail_password) return res.status(400).json({ error: 'Gmail not configured in Settings' });
+  if (!s.ebook_url) return res.status(400).json({ error: 'Ebook URL not set in Settings → Ebook Delivery' });
+
+  const firstName = prospect.first_name || 'there';
+
+  const defaultSubject = `Your free copy is here, ${firstName} 📖`;
+  const defaultBody = `Hi ${firstName},\n\nYou asked for it — here it is:\n\n👉 ${s.ebook_url}\n\nThe Second Income System walks you through exactly how to build a reliable second income stream, step by step.\n\nLet me know what you think once you've had a look!\n\nBest,`;
+
+  const subject = (s.ebook_email_subject || defaultSubject).replace(/{{first_name}}/gi, firstName);
+  const body    = (s.ebook_email_body    || defaultBody   ).replace(/{{first_name}}/gi, firstName);
+
+  try {
+    const transporter = nodemailer.createTransport({
+      host: 'smtp.gmail.com', port: 587, secure: false,
+      auth: { user: s.gmail_email, pass: s.gmail_password },
+    });
+    await transporter.sendMail({
+      from: s.gmail_email,
+      to: prospect.email,
+      subject,
+      html: body.replace(/\n/g, '<br>'),
+    });
+
+    db.prepare('UPDATE campaign_prospects SET lead_status = ? WHERE campaign_id = ? AND prospect_id = ?')
+      .run('pdf_sent', req.params.id, req.params.prospectId);
+
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to send email: ' + err.message });
+  }
 });
 
 // Remove prospect from campaign

@@ -27,6 +27,8 @@ export const api = {
   // Settings
   getSettings: () => req('GET', '/settings'),
   saveSettings: (data) => req('POST', '/settings', data),
+  getDiagnostics: () => req('GET', '/settings/diagnostics'),
+  triggerSend: () => req('POST', '/settings/trigger-send'),
 
   // Prospects
   searchProspects: (params) => req('POST', '/prospects/search', params),
@@ -47,6 +49,8 @@ export const api = {
   updateAiEmail: (campaignId, prospectId, data) => req('PATCH', `/campaigns/${campaignId}/ai-email/${prospectId}`, data),
   updateLeadStatus: (campaignId, prospectId, lead_status) =>
     req('PATCH', `/campaigns/${campaignId}/prospects/${prospectId}/status`, { lead_status }),
+  sendPdf: (campaignId, prospectId) =>
+    req('POST', `/campaigns/${campaignId}/prospects/${prospectId}/send-pdf`),
   removeProspect: (campaignId, prospectId) => req('DELETE', `/campaigns/${campaignId}/prospects/${prospectId}`),
 
   // Analytics
